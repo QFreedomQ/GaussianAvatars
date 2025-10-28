@@ -106,6 +106,22 @@ class OptimizationParams(ParamGroup):
         self.lambda_dynamic_offset = 0.
         self.lambda_laplacian = 0.
         self.lambda_dynamic_offset_std = 0  #1.
+        
+        # Innovation 1: Perceptual Loss Enhancement
+        # Source: InstantAvatar (CVPR 2023), NHA (CVPR 2023)
+        self.lambda_perceptual = 0.05  # Weight for VGG-based perceptual loss
+        self.use_vgg_loss = True  # Enable VGG perceptual loss
+        self.use_lpips_loss = False  # LPIPS is slower, disabled by default
+        
+        # Innovation 2: Adaptive Densification Strategy
+        # Source: Dynamic 3D Gaussians (CVPR 2024), MonoGaussianAvatar
+        self.use_adaptive_densification = True  # Enable region-aware densification
+        self.adaptive_densify_ratio = 1.5  # Threshold multiplier for important regions
+        
+        # Innovation 3: Temporal Consistency Regularization
+        # Source: PointAvatar (CVPR 2023), FlashAvatar (ICCV 2023)
+        self.lambda_temporal = 0.01  # Weight for temporal consistency loss
+        self.use_temporal_consistency = True  # Enable temporal smoothness
 
         super().__init__(parser, "Optimization Parameters")
 
