@@ -71,6 +71,9 @@ class GaussianModel:
         self.binding_counter = None  # number of points bound to each face
         self.timestep = None  # the current timestep
         self.num_timesteps = 1  # required by viewers
+        
+        # Innovation 2: Adaptive densification placeholder
+        self.adaptive_densification_strategy = None
 
     def capture(self):
         return (
@@ -448,7 +451,12 @@ class GaussianModel:
         # Extract points that satisfy the gradient condition
         padded_grad = torch.zeros((n_init_points), device="cuda")
         padded_grad[:grads.shape[0]] = grads.squeeze()
-        selected_pts_mask = torch.where(padded_grad >= grad_threshold, True, False)
+        if isinstance(grad_threshold, torch.Tensor) and grad_threshold.numel() > 1:
+            threshold = torch.zeros_like(padded_grad)
+            threshold[:grad_threshold.shape[0]] = grad_threshold.squeeze()
+            selected_pts_mask = padded_grad >= threshold
+        else:
+            selected_pts_mask = torch.where(padded_grad >= grad_threshold, True, False)
         selected_pts_mask = torch.logical_and(selected_pts_mask,
                                               torch.max(self.get_scaling, dim=1).values > self.percent_dense*scene_extent)
 
@@ -480,7 +488,13 @@ class GaussianModel:
 
     def densify_and_clone(self, grads, grad_threshold, scene_extent):
         # Extract points that satisfy the gradient condition
-        selected_pts_mask = torch.where(torch.norm(grads, dim=-1) >= grad_threshold, True, False)
+        # Support both scalar and per-Gaussian thresholds
+        if isinstance(grad_threshold, torch.Tensor) and grad_threshold.numel() > 1:
+            # Per-Gaussian threshold (Innovation 2: Adaptive Densification)
+            selected_pts_mask = torch.norm(grads, dim=-1) >= grad_threshold
+        else:
+            # Scalar threshold (original behavior)
+            selected_pts_mask = torch.where(torch.norm(grads, dim=-1) >= grad_threshold, True, False)
         selected_pts_mask = torch.logical_and(selected_pts_mask,
                                               torch.max(self.get_scaling, dim=1).values <= self.percent_dense*scene_extent)
         
@@ -502,10 +516,25 @@ class GaussianModel:
         grads = self.xyz_gradient_accum / self.denom
         grads[grads.isnan()] = 0.0
 
-        self.densify_and_clone(grads, max_grad, extent)
-        self.densify_and_split(grads, max_grad, extent)
+        # Innovation 2: Use adaptive thresholds if available
+        if hasattr(self, 'adaptive_densification_strategy') and self.adaptive_densification_strategy is not None and self.binding is not None:
+            adaptive_grad_threshold = self.adaptive_densification_strategy.get_adaptive_threshold(
+                self.binding, max_grad
+            )
+            self.densify_and_clone(grads, adaptive_grad_threshold, extent)
+            self.densify_and_split(grads, adaptive_grad_threshold, extent)
+        else:
+            self.densify_and_clone(grads, max_grad, extent)
+            self.densify_and_split(grads, max_grad, extent)
 
-        prune_mask = (self.get_opacity < min_opacity).squeeze()
+        opacity_values = self.get_opacity.squeeze()
+        if hasattr(self, 'adaptive_densification_strategy') and self.adaptive_densification_strategy is not None and self.binding is not None:
+            adaptive_opacity_threshold = self.adaptive_densification_strategy.get_adaptive_prune_threshold(
+                self.binding, min_opacity
+            )
+            prune_mask = opacity_values < adaptive_opacity_threshold
+        else:
+            prune_mask = opacity_values < min_opacity
         if max_screen_size:
             big_points_vs = self.max_radii2D > max_screen_size
             big_points_ws = self.get_scaling.max(dim=1).values > 0.1 * extent

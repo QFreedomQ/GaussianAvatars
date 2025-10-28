@@ -24,8 +24,16 @@ import uuid
 from tqdm import tqdm
 from utils.image_utils import psnr, error_map
 from lpipsPyTorch import lpips
+from lpipsPyTorch.modules.lpips import LPIPS
 from argparse import ArgumentParser, Namespace
 from arguments import ModelParams, PipelineParams, OptimizationParams
+
+# Innovation 1: Perceptual Loss Enhancement
+from utils.perceptual_loss import CombinedPerceptualLoss
+
+# Innovation 3: Temporal Consistency Regularization
+from utils.temporal_consistency import TemporalConsistencyLoss
+
 try:
     from torch.utils.tensorboard import SummaryWriter
     TENSORBOARD_FOUND = True
@@ -45,6 +53,30 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     if checkpoint:
         (model_params, first_iter) = torch.load(checkpoint)
         gaussians.restore(model_params, opt)
+
+    # Innovation 1: Initialize perceptual loss module
+    perceptual_loss_fn = None
+    if hasattr(opt, 'lambda_perceptual') and opt.lambda_perceptual > 0:
+        use_vgg = getattr(opt, 'use_vgg_loss', True)
+        use_lpips = getattr(opt, 'use_lpips_loss', False)
+        if use_vgg or use_lpips:
+            lpips_module = None
+            if use_lpips:
+                lpips_module = LPIPS(net_type='vgg').to('cuda').eval()
+                for param in lpips_module.parameters():
+                    param.requires_grad = False
+            perceptual_loss_fn = CombinedPerceptualLoss(
+                lpips_fn=lpips_module,
+                use_vgg=use_vgg,
+                use_lpips=use_lpips,
+                vgg_weight=1.0,
+                lpips_weight=0.1
+            ).to('cuda').eval()
+
+    # Innovation 3: Initialize temporal consistency loss
+    temporal_loss_fn = None
+    if isinstance(gaussians, FlameGaussianModel) and getattr(opt, 'use_temporal_consistency', False) and getattr(opt, 'lambda_temporal', 0) > 0:
+        temporal_loss_fn = TemporalConsistencyLoss().to('cuda')
 
     bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
@@ -131,6 +163,20 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         losses['l1'] = l1_loss(image, gt_image) * (1.0 - opt.lambda_dssim)
         losses['ssim'] = (1.0 - ssim(image, gt_image)) * opt.lambda_dssim
 
+        # Innovation 1: Add perceptual loss
+        if perceptual_loss_fn is not None and hasattr(opt, 'lambda_perceptual') and opt.lambda_perceptual > 0:
+            losses['perceptual'] = perceptual_loss_fn(image, gt_image) * opt.lambda_perceptual
+
+        # Innovation 3: Add temporal consistency loss
+        if temporal_loss_fn is not None and gaussians.binding is not None and hasattr(opt, 'lambda_temporal') and opt.lambda_temporal > 0:
+            temporal_loss = temporal_loss_fn(
+                gaussians.flame_param,
+                viewpoint_cam.timestep,
+                gaussians.num_timesteps,
+                dynamic_offset=gaussians.flame_param['dynamic_offset'] if 'dynamic_offset' in gaussians.flame_param else None
+            )
+            losses['temporal'] = temporal_loss * opt.lambda_temporal
+
         if gaussians.binding != None:
             if opt.metric_xyz:
                 losses['xyz'] = F.relu((gaussians._xyz*gaussians.face_scaling[gaussians.binding])[visibility_filter] - opt.threshold_xyz).norm(dim=1).mean() * opt.lambda_xyz
@@ -180,6 +226,11 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                     postfix["lap"] = f"{losses['lap']:.{7}f}"
                 if 'dynamic_offset_std' in losses:
                     postfix["dynamic_offset_std"] = f"{losses['dynamic_offset_std']:.{7}f}"
+                # Innovation 1 & 3: Add new loss terms to progress bar
+                if 'perceptual' in losses:
+                    postfix["percep"] = f"{losses['perceptual']:.{7}f}"
+                if 'temporal' in losses:
+                    postfix["temp"] = f"{losses['temporal']:.{7}f}"
                 progress_bar.set_postfix(postfix)
                 progress_bar.update(10)
             if iteration == opt.iterations:
@@ -249,6 +300,10 @@ def training_report(tb_writer, iteration, losses, elapsed, testing_iterations, s
             tb_writer.add_scalar('train_loss_patches/laplacian', losses['laplacian'].item(), iteration)
         if 'dynamic_offset_std' in losses:
             tb_writer.add_scalar('train_loss_patches/dynamic_offset_std', losses['dynamic_offset_std'].item(), iteration)
+        if 'perceptual' in losses:
+            tb_writer.add_scalar('train_loss_patches/perceptual_loss', losses['perceptual'].item(), iteration)
+        if 'temporal' in losses:
+            tb_writer.add_scalar('train_loss_patches/temporal_loss', losses['temporal'].item(), iteration)
         tb_writer.add_scalar('train_loss_patches/total_loss', losses['total'].item(), iteration)
         tb_writer.add_scalar('iter_time', elapsed, iteration)
 
