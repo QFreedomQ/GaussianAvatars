@@ -72,11 +72,18 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 vgg_weight=1.0,
                 lpips_weight=0.1
             ).to('cuda').eval()
+            print(f"[Innovation 1] Perceptual loss enabled (lambda_perceptual={opt.lambda_perceptual}, use_vgg={use_vgg}, use_lpips={use_lpips})")
+    elif getattr(opt, 'lambda_perceptual', 0) > 0:
+        print("[Innovation 1] WARNING: lambda_perceptual > 0 but perceptual loss module could not be initialized.")
 
     # Innovation 3: Initialize temporal consistency loss
     temporal_loss_fn = None
-    if isinstance(gaussians, FlameGaussianModel) and getattr(opt, 'use_temporal_consistency', False) and getattr(opt, 'lambda_temporal', 0) > 0:
+    temporal_flag = getattr(opt, 'use_temporal_consistency', False) and getattr(opt, 'lambda_temporal', 0) > 0
+    if isinstance(gaussians, FlameGaussianModel) and temporal_flag:
         temporal_loss_fn = TemporalConsistencyLoss().to('cuda')
+        print(f"[Innovation 3] Temporal consistency enabled (lambda_temporal={opt.lambda_temporal})")
+    elif temporal_flag:
+        print("[Innovation 3] WARNING: Temporal consistency requested but no FLAME binding detected; skipping.")
 
     bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
@@ -84,7 +91,18 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     iter_start = torch.cuda.Event(enable_timing = True)
     iter_end = torch.cuda.Event(enable_timing = True)
 
-    loader_camera_train = DataLoader(scene.getTrainCameras(), batch_size=None, shuffle=True, num_workers=8, pin_memory=True, persistent_workers=True)
+    # Use configurable dataloader settings for better performance
+    num_workers = getattr(opt, 'dataloader_workers', 8)
+    loader_kwargs = dict(
+        batch_size=None,
+        shuffle=True,
+        num_workers=num_workers,
+        pin_memory=True,
+        persistent_workers=True if num_workers > 0 else False,
+    )
+    if num_workers > 0:
+        loader_kwargs["prefetch_factor"] = getattr(opt, 'prefetch_factor', 2)
+    loader_camera_train = DataLoader(scene.getTrainCameras(), **loader_kwargs)
     iter_camera_train = iter(loader_camera_train)
     # viewpoint_stack = None
     ema_loss_for_log = 0.0
@@ -237,7 +255,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 progress_bar.close()
 
             # Log and save
-            training_report(tb_writer, iteration, losses, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background))
+            training_report(tb_writer, iteration, losses, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background), opt)
             if (iteration in saving_iterations):
                 print("[ITER {}] Saving Gaussians".format(iteration))
                 scene.save(iteration)
@@ -286,7 +304,7 @@ def prepare_output_and_logger(args):
         print("Tensorboard not available: not logging progress")
     return tb_writer
 
-def training_report(tb_writer, iteration, losses, elapsed, testing_iterations, scene : Scene, renderFunc, renderArgs):
+def training_report(tb_writer, iteration, losses, elapsed, testing_iterations, scene : Scene, renderFunc, renderArgs, opt=None):
     if tb_writer:
         tb_writer.add_scalar('train_loss_patches/l1_loss', losses['l1'].item(), iteration)
         tb_writer.add_scalar('train_loss_patches/ssim_loss', losses['ssim'].item(), iteration)
@@ -311,6 +329,10 @@ def training_report(tb_writer, iteration, losses, elapsed, testing_iterations, s
     if iteration in testing_iterations:
         print("[ITER {}] Evaluating".format(iteration))
         torch.cuda.empty_cache()
+        
+        # Get dataloader configuration
+        num_workers = getattr(opt, 'dataloader_workers', 8) if opt else 8
+        
         validation_configs = (
             {'name': 'val', 'cameras' : scene.getValCameras()},
             {'name': 'test', 'cameras' : scene.getTestCameras()},
@@ -326,7 +348,16 @@ def training_report(tb_writer, iteration, losses, elapsed, testing_iterations, s
                 image_cache = []
                 gt_image_cache = []
                 vis_ct = 0
-                for idx, viewpoint in tqdm(enumerate(DataLoader(config['cameras'], shuffle=False, batch_size=None, num_workers=8)), total=len(config['cameras'])):
+                eval_loader_kwargs = dict(
+                    shuffle=False,
+                    batch_size=None,
+                    num_workers=num_workers,
+                    pin_memory=True,
+                    persistent_workers=True if num_workers > 0 else False,
+                )
+                if num_workers > 0:
+                    eval_loader_kwargs["prefetch_factor"] = getattr(opt, 'prefetch_factor', 2)
+                for idx, viewpoint in tqdm(enumerate(DataLoader(config['cameras'], **eval_loader_kwargs)), total=len(config['cameras'])):
                     if scene.gaussians.num_timesteps > 1:
                         scene.gaussians.select_mesh_by_timestep(viewpoint.timestep)
                     image = torch.clamp(renderFunc(viewpoint, scene.gaussians, *renderArgs)["render"], 0.0, 1.0)
