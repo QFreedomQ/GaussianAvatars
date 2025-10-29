@@ -88,6 +88,12 @@ python train.py \
 
 </details>
 
+> [!TIP]
+> Looking for the innovation modules or performance tips? Check out:
+> - [TRAINING_GUIDE.md](./TRAINING_GUIDE.md): innovation overview, experiment commands, and FAQ
+> - [CORRECTED_TRAINING_COMMANDS.sh](./CORRECTED_TRAINING_COMMANDS.sh): ready-to-run experiments for baseline vs. innovations
+> - [PERFORMANCE_OPTIMIZATION.md](./PERFORMANCE_OPTIMIZATION.md): CPU/GPU utilization improvements and monitoring
+
 > [!NOTE]
 > During training, a complete evaluation are conducted on both the validation set (novel-view synthesis) and test set (self-reenactment) every `--interval` iterations. You can check the metrics in the commandline or Tensorboard. The metrics are computed on all images, although we only save partial images in Tensorboard.
 

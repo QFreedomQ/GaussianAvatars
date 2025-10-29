@@ -202,6 +202,7 @@ class FlameGaussianModel(GaussianModel):
             print(f"[Innovation 2] Enabled adaptive densification with ratio {self.adaptive_densify_ratio}")
         else:
             self.adaptive_densification_strategy = None
+            print("[Innovation 2] Adaptive densification disabled")
 
         if self.not_finetune_flame_params:
             return
