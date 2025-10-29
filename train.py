@@ -91,18 +91,14 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     iter_start = torch.cuda.Event(enable_timing = True)
     iter_end = torch.cuda.Event(enable_timing = True)
 
-    # Use configurable dataloader settings for better performance
-    num_workers = getattr(opt, 'dataloader_workers', 8)
-    loader_kwargs = dict(
+    loader_camera_train = DataLoader(
+        scene.getTrainCameras(),
         batch_size=None,
         shuffle=True,
-        num_workers=num_workers,
+        num_workers=8,
         pin_memory=True,
-        persistent_workers=True if num_workers > 0 else False,
+        persistent_workers=True,
     )
-    if num_workers > 0:
-        loader_kwargs["prefetch_factor"] = getattr(opt, 'prefetch_factor', 2)
-    loader_camera_train = DataLoader(scene.getTrainCameras(), **loader_kwargs)
     iter_camera_train = iter(loader_camera_train)
     # viewpoint_stack = None
     ema_loss_for_log = 0.0
@@ -255,7 +251,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 progress_bar.close()
 
             # Log and save
-            training_report(tb_writer, iteration, losses, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background), opt)
+            training_report(tb_writer, iteration, losses, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background))
             if (iteration in saving_iterations):
                 print("[ITER {}] Saving Gaussians".format(iteration))
                 scene.save(iteration)
@@ -304,7 +300,7 @@ def prepare_output_and_logger(args):
         print("Tensorboard not available: not logging progress")
     return tb_writer
 
-def training_report(tb_writer, iteration, losses, elapsed, testing_iterations, scene : Scene, renderFunc, renderArgs, opt=None):
+def training_report(tb_writer, iteration, losses, elapsed, testing_iterations, scene : Scene, renderFunc, renderArgs):
     if tb_writer:
         tb_writer.add_scalar('train_loss_patches/l1_loss', losses['l1'].item(), iteration)
         tb_writer.add_scalar('train_loss_patches/ssim_loss', losses['ssim'].item(), iteration)
@@ -329,10 +325,6 @@ def training_report(tb_writer, iteration, losses, elapsed, testing_iterations, s
     if iteration in testing_iterations:
         print("[ITER {}] Evaluating".format(iteration))
         torch.cuda.empty_cache()
-        
-        # Get dataloader configuration
-        num_workers = getattr(opt, 'dataloader_workers', 8) if opt else 8
-        
         validation_configs = (
             {'name': 'val', 'cameras' : scene.getValCameras()},
             {'name': 'test', 'cameras' : scene.getTestCameras()},
@@ -348,16 +340,19 @@ def training_report(tb_writer, iteration, losses, elapsed, testing_iterations, s
                 image_cache = []
                 gt_image_cache = []
                 vis_ct = 0
-                eval_loader_kwargs = dict(
-                    shuffle=False,
-                    batch_size=None,
-                    num_workers=num_workers,
-                    pin_memory=True,
-                    persistent_workers=True if num_workers > 0 else False,
-                )
-                if num_workers > 0:
-                    eval_loader_kwargs["prefetch_factor"] = getattr(opt, 'prefetch_factor', 2)
-                for idx, viewpoint in tqdm(enumerate(DataLoader(config['cameras'], **eval_loader_kwargs)), total=len(config['cameras'])):
+                for idx, viewpoint in tqdm(
+                    enumerate(
+                        DataLoader(
+                            config['cameras'],
+                            shuffle=False,
+                            batch_size=None,
+                            num_workers=8,
+                            pin_memory=True,
+                            persistent_workers=True,
+                        )
+                    ),
+                    total=len(config['cameras']),
+                ):
                     if scene.gaussians.num_timesteps > 1:
                         scene.gaussians.select_mesh_by_timestep(viewpoint.timestep)
                     image = torch.clamp(renderFunc(viewpoint, scene.gaussians, *renderArgs)["render"], 0.0, 1.0)
