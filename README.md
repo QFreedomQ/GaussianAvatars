@@ -26,6 +26,8 @@ The mesh rendering operations are adapted from [NVDiffRec](https://github.com/NV
 
 ### [2. Download](doc/download.md)
 
+### [3. Experiment Workflow & Metrics (ZH)](doc/experiment_steps.md)
+
 ## Usage
 
 ### 0. Demo
@@ -137,7 +139,10 @@ python local_viewer.py \
 > The viewer is implemented in Python, making development convenient but not ideal for performance benchmarking. As such, please avoid using the viewer to measure the rendering frame rate of our method. Instead, use the [FPS benchmark script](https://github.com/ShenhanQian/GaussianAvatars/blob/main/doc/offline_render.md#fps-benchmark) for accurate performance evaluation.
 
 
-### [3. Offline Rendering](doc/offline_render.md)
+### [3. Offline Rendering & Evaluation](doc/offline_render.md)
+
+> [!TIP]
+> 📖 **Experiment Workflow Guide**: Refer to the [Chinese guide](doc/experiment_steps.md) or the [English summary](doc/experiment_steps_en.md) for end-to-end steps covering setup, training, rendering, and metric evaluation.
 
 ## Cite
 
