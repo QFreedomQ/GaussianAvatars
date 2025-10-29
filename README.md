@@ -88,6 +88,9 @@ python train.py \
 
 </details>
 
+> [!TIP]
+> Need a step-by-step experiment playbook? See [EXPERIMENT_GUIDE.md](./EXPERIMENT_GUIDE.md) for environment setup, ablations, evaluation code, and innovation explanations.
+
 > [!NOTE]
 > During training, a complete evaluation are conducted on both the validation set (novel-view synthesis) and test set (self-reenactment) every `--interval` iterations. You can check the metrics in the commandline or Tensorboard. The metrics are computed on all images, although we only save partial images in Tensorboard.
 
