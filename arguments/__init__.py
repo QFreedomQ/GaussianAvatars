@@ -122,11 +122,6 @@ class OptimizationParams(ParamGroup):
         # Source: PointAvatar (CVPR 2023), FlashAvatar (ICCV 2023)
         self.lambda_temporal = 0.01  # Weight for temporal consistency loss
         self.use_temporal_consistency = False  # Enable temporal smoothness (default: disabled)
-        
-        # Performance optimization parameters
-        self.use_amp = False  # Use automatic mixed precision training (faster, lower memory)
-        self.dataloader_workers = 8  # Number of dataloader workers
-        self.prefetch_factor = 2  # Prefetch factor for dataloader
 
         super().__init__(parser, "Optimization Parameters")
 
