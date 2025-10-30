@@ -106,6 +106,7 @@ class OptimizationParams(ParamGroup):
         self.lambda_dynamic_offset = 0.
         self.lambda_laplacian = 0.
         self.lambda_dynamic_offset_std = 0  #1.
+        self.use_amp = False
         
         # Innovation 1: Perceptual Loss Enhancement
         # Source: InstantAvatar (CVPR 2023), NHA (CVPR 2023)
