@@ -123,6 +123,9 @@ class OptimizationParams(ParamGroup):
         self.lambda_temporal = 0.01  # Weight for temporal consistency loss
         self.use_temporal_consistency = False  # Enable temporal smoothness (default: disabled)
 
+        # Mixed precision
+        self.use_amp = False  # Enable automatic mixed precision (default: disabled)
+
         super().__init__(parser, "Optimization Parameters")
 
 def get_combined_args(parser : ArgumentParser):

@@ -54,6 +54,12 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         (model_params, first_iter) = torch.load(checkpoint)
         gaussians.restore(model_params, opt)
 
+    # Initialize AMP scaler if mixed precision is enabled
+    use_amp = getattr(opt, 'use_amp', False)
+    scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
+    if use_amp:
+        print("[AMP] Automatic Mixed Precision enabled")
+
     # Innovation 1: Initialize perceptual loss module
     perceptual_loss_fn = None
     if hasattr(opt, 'lambda_perceptual') and opt.lambda_perceptual > 0:
@@ -164,64 +170,72 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         if gaussians.binding != None:
             gaussians.select_mesh_by_timestep(viewpoint_cam.timestep)
 
-        # Render
-        if (iteration - 1) == debug_from:
-            pipe.debug = True
-        render_pkg = render(viewpoint_cam, gaussians, pipe, background)
-        image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
+        # Render and compute loss with AMP context
+        with torch.cuda.amp.autocast(enabled=use_amp):
+            # Render
+            if (iteration - 1) == debug_from:
+                pipe.debug = True
+            render_pkg = render(viewpoint_cam, gaussians, pipe, background)
+            image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
 
-        # Loss
-        gt_image = viewpoint_cam.original_image.cuda()
+            # Loss
+            gt_image = viewpoint_cam.original_image.cuda()
 
-        losses = {}
-        losses['l1'] = l1_loss(image, gt_image) * (1.0 - opt.lambda_dssim)
-        losses['ssim'] = (1.0 - ssim(image, gt_image)) * opt.lambda_dssim
+            losses = {}
+            losses['l1'] = l1_loss(image, gt_image) * (1.0 - opt.lambda_dssim)
+            losses['ssim'] = (1.0 - ssim(image, gt_image)) * opt.lambda_dssim
 
-        # Innovation 1: Add perceptual loss
-        if perceptual_loss_fn is not None and hasattr(opt, 'lambda_perceptual') and opt.lambda_perceptual > 0:
-            losses['perceptual'] = perceptual_loss_fn(image, gt_image) * opt.lambda_perceptual
+            # Innovation 1: Add perceptual loss
+            if perceptual_loss_fn is not None and hasattr(opt, 'lambda_perceptual') and opt.lambda_perceptual > 0:
+                losses['perceptual'] = perceptual_loss_fn(image, gt_image) * opt.lambda_perceptual
 
-        # Innovation 3: Add temporal consistency loss
-        if temporal_loss_fn is not None and gaussians.binding is not None and hasattr(opt, 'lambda_temporal') and opt.lambda_temporal > 0:
-            temporal_loss = temporal_loss_fn(
-                gaussians.flame_param,
-                viewpoint_cam.timestep,
-                gaussians.num_timesteps,
-                dynamic_offset=gaussians.flame_param['dynamic_offset'] if 'dynamic_offset' in gaussians.flame_param else None
-            )
-            losses['temporal'] = temporal_loss * opt.lambda_temporal
+            # Innovation 3: Add temporal consistency loss
+            if temporal_loss_fn is not None and gaussians.binding is not None and hasattr(opt, 'lambda_temporal') and opt.lambda_temporal > 0:
+                temporal_loss = temporal_loss_fn(
+                    gaussians.flame_param,
+                    viewpoint_cam.timestep,
+                    gaussians.num_timesteps,
+                    dynamic_offset=gaussians.flame_param['dynamic_offset'] if 'dynamic_offset' in gaussians.flame_param else None
+                )
+                losses['temporal'] = temporal_loss * opt.lambda_temporal
 
-        if gaussians.binding != None:
-            if opt.metric_xyz:
-                losses['xyz'] = F.relu((gaussians._xyz*gaussians.face_scaling[gaussians.binding])[visibility_filter] - opt.threshold_xyz).norm(dim=1).mean() * opt.lambda_xyz
-            else:
-                # losses['xyz'] = gaussians._xyz.norm(dim=1).mean() * opt.lambda_xyz
-                losses['xyz'] = F.relu(gaussians._xyz[visibility_filter].norm(dim=1) - opt.threshold_xyz).mean() * opt.lambda_xyz
-
-            if opt.lambda_scale != 0:
-                if opt.metric_scale:
-                    losses['scale'] = F.relu(gaussians.get_scaling[visibility_filter] - opt.threshold_scale).norm(dim=1).mean() * opt.lambda_scale
+            if gaussians.binding != None:
+                if opt.metric_xyz:
+                    losses['xyz'] = F.relu((gaussians._xyz*gaussians.face_scaling[gaussians.binding])[visibility_filter] - opt.threshold_xyz).norm(dim=1).mean() * opt.lambda_xyz
                 else:
-                    # losses['scale'] = F.relu(gaussians._scaling).norm(dim=1).mean() * opt.lambda_scale
-                    losses['scale'] = F.relu(torch.exp(gaussians._scaling[visibility_filter]) - opt.threshold_scale).norm(dim=1).mean() * opt.lambda_scale
+                    # losses['xyz'] = gaussians._xyz.norm(dim=1).mean() * opt.lambda_xyz
+                    losses['xyz'] = F.relu(gaussians._xyz[visibility_filter].norm(dim=1) - opt.threshold_xyz).mean() * opt.lambda_xyz
 
-            if opt.lambda_dynamic_offset != 0:
-                losses['dy_off'] = gaussians.compute_dynamic_offset_loss() * opt.lambda_dynamic_offset
+                if opt.lambda_scale != 0:
+                    if opt.metric_scale:
+                        losses['scale'] = F.relu(gaussians.get_scaling[visibility_filter] - opt.threshold_scale).norm(dim=1).mean() * opt.lambda_scale
+                    else:
+                        # losses['scale'] = F.relu(gaussians._scaling).norm(dim=1).mean() * opt.lambda_scale
+                        losses['scale'] = F.relu(torch.exp(gaussians._scaling[visibility_filter]) - opt.threshold_scale).norm(dim=1).mean() * opt.lambda_scale
 
-            if opt.lambda_dynamic_offset_std != 0:
-                ti = viewpoint_cam.timestep
-                t_indices =[ti]
-                if ti > 0:
-                    t_indices.append(ti-1)
-                if ti < gaussians.num_timesteps - 1:
-                    t_indices.append(ti+1)
-                losses['dynamic_offset_std'] = gaussians.flame_param['dynamic_offset'].std(dim=0).mean() * opt.lambda_dynamic_offset_std
+                if opt.lambda_dynamic_offset != 0:
+                    losses['dy_off'] = gaussians.compute_dynamic_offset_loss() * opt.lambda_dynamic_offset
+
+                if opt.lambda_dynamic_offset_std != 0:
+                    ti = viewpoint_cam.timestep
+                    t_indices =[ti]
+                    if ti > 0:
+                        t_indices.append(ti-1)
+                    if ti < gaussians.num_timesteps - 1:
+                        t_indices.append(ti+1)
+                    losses['dynamic_offset_std'] = gaussians.flame_param['dynamic_offset'].std(dim=0).mean() * opt.lambda_dynamic_offset_std
         
-            if opt.lambda_laplacian != 0:
-                losses['lap'] = gaussians.compute_laplacian_loss() * opt.lambda_laplacian
+                if opt.lambda_laplacian != 0:
+                    losses['lap'] = gaussians.compute_laplacian_loss() * opt.lambda_laplacian
         
-        losses['total'] = sum([v for k, v in losses.items()])
-        losses['total'].backward()
+            losses['total'] = sum([v for k, v in losses.items()])
+
+        # Ensure tensors used outside autocast are in float32 when needed
+        if radii.dtype != torch.float32:
+            radii = radii.float()
+
+        # Backward pass with gradient scaling
+        scaler.scale(losses['total']).backward()
 
         iter_end.record()
 
@@ -271,7 +285,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
             # Optimizer step
             if iteration < opt.iterations:
-                gaussians.optimizer.step()
+                scaler.step(gaussians.optimizer)
+                scaler.update()
                 gaussians.optimizer.zero_grad(set_to_none = True)
 
             if (iteration in checkpoint_iterations):
