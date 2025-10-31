@@ -42,14 +42,6 @@ except ImportError:
     TENSORBOARD_FOUND = False
 
 
-def _downsample_if_needed(image, scale):
-    if scale >= 0.999:
-        return image
-    new_h = max(1, int(image.shape[-2] * scale))
-    new_w = max(1, int(image.shape[-1] * scale))
-    return F.interpolate(image.unsqueeze(0), size=(new_h, new_w), mode="bilinear", align_corners=False).squeeze(0)
-
-
 def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from):
     first_iter = 0
     tb_writer = prepare_output_and_logger(dataset)
@@ -60,7 +52,14 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     else:
         gaussians = GaussianModel(dataset.sh_degree)
 
-    scene = Scene(dataset, gaussians)
+    resolution_scheduler = None
+    scene_resolution_scales = [1.0]
+    if getattr(opt, "use_progressive_resolution", False):
+        resolution_scheduler = ProgressiveResolutionScheduler(opt.resolution_schedule, opt.resolution_milestones)
+        scene_resolution_scales = sorted(set(resolution_scheduler.scales + [1.0]))
+        print(f"[Innovation] Progressive resolution schedule {opt.resolution_schedule} with milestones {opt.resolution_milestones}")
+
+    scene = Scene(dataset, gaussians, resolution_scales=scene_resolution_scales)
     gaussians.training_setup(opt)
 
     if checkpoint:
@@ -88,11 +87,6 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         gaussians.enable_smart_densification(opt.densify_percentile_clone, opt.densify_percentile_split)
         print(f"[Innovation] Smart densification enabled (clone={opt.densify_percentile_clone}%, split={opt.densify_percentile_split}%)")
 
-    resolution_scheduler = None
-    if getattr(opt, "use_progressive_resolution", False):
-        resolution_scheduler = ProgressiveResolutionScheduler(opt.resolution_schedule, opt.resolution_milestones)
-        print(f"[Innovation] Progressive resolution schedule {opt.resolution_schedule} with milestones {opt.resolution_milestones}")
-
     color_calibration = None
     color_optimizer = None
     if getattr(opt, "use_color_calibration", False):
@@ -114,8 +108,13 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     iter_start = torch.cuda.Event(enable_timing=True)
     iter_end = torch.cuda.Event(enable_timing=True)
 
+    ema_loss_for_log = 0.0
+    progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
+    first_iter += 1
+
+    current_scale = resolution_scheduler.get_scale(first_iter) if resolution_scheduler is not None else 1.0
     loader_camera_train = DataLoader(
-        scene.getTrainCameras(),
+        scene.getTrainCameras(current_scale),
         batch_size=None,
         shuffle=True,
         num_workers=8,
@@ -123,11 +122,24 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         persistent_workers=True,
     )
     iter_camera_train = iter(loader_camera_train)
-    ema_loss_for_log = 0.0
-    progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
-    first_iter += 1
 
     for iteration in range(first_iter, opt.iterations + 1):
+        # Update camera resolution if using progressive resolution
+        if resolution_scheduler is not None:
+            new_scale = resolution_scheduler.get_scale(iteration)
+            if new_scale != current_scale:
+                print(f"\n[ITER {iteration}] Switching to resolution scale {new_scale}")
+                current_scale = new_scale
+                loader_camera_train = DataLoader(
+                    scene.getTrainCameras(current_scale),
+                    batch_size=None,
+                    shuffle=True,
+                    num_workers=8,
+                    pin_memory=True,
+                    persistent_workers=True,
+                )
+                iter_camera_train = iter(loader_camera_train)
+
         if network_gui.conn is None:
             network_gui.try_connect()
         while network_gui.conn is not None:
@@ -173,8 +185,6 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         if gaussians.binding is not None:
             gaussians.select_mesh_by_timestep(viewpoint_cam.timestep)
 
-        scale_factor = resolution_scheduler.get_scale(iteration) if resolution_scheduler else 1.0
-
         with torch.cuda.amp.autocast(enabled=use_amp):
             if (iteration - 1) == debug_from:
                 pipe.debug = True
@@ -187,8 +197,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             image = color_calibration(image_raw) if color_calibration is not None else image_raw
             gt_image = viewpoint_cam.original_image.cuda()
 
-            image_for_loss = _downsample_if_needed(image, scale_factor)
-            gt_for_loss = _downsample_if_needed(gt_image, scale_factor)
+            image_for_loss = image
+            gt_for_loss = gt_image
 
             losses = {}
             if region_loss_fn is not None:
