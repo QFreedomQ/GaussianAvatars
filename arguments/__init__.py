@@ -123,6 +123,33 @@ class OptimizationParams(ParamGroup):
         self.lambda_temporal = 0.01  # Weight for temporal consistency loss
         self.use_temporal_consistency = False  # Enable temporal smoothness (default: disabled)
 
+        # Efficient Innovations
+        self.use_region_adaptive_loss = False
+        self.region_weight_eyes = 2.0
+        self.region_weight_mouth = 2.0
+        self.region_weight_nose = 1.5
+        self.region_weight_face = 1.2
+
+        self.use_smart_densification = False
+        self.densify_percentile_clone = 75.0
+        self.densify_percentile_split = 90.0
+
+        self.use_progressive_resolution = False
+        self.resolution_schedule = "0.5,0.75,1.0"
+        self.resolution_milestones = "100000,300000"
+
+        self.use_color_calibration = False
+        self.color_net_hidden_dim = 16
+        self.color_net_layers = 3
+        self.lambda_color_reg = 0.0
+
+        self.use_contrastive_reg = False
+        self.lambda_contrastive = 0.01
+
+        self.use_adaptive_lr = False
+        self.lr_adapt_patience = 100
+        self.lr_adapt_factor = 0.8
+
         # Mixed precision
         self.use_amp = False  # Enable automatic mixed precision (default: disabled)
 

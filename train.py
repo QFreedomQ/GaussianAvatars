@@ -34,6 +34,10 @@ from utils.perceptual_loss import CombinedPerceptualLoss
 # Innovation 3: Temporal Consistency Regularization
 from utils.temporal_consistency import TemporalConsistencyLoss
 
+# Efficient Innovations
+from utils.region_adaptive_loss import RegionAdaptiveLoss
+from utils.color_calibration import LightweightColorCalibration
+
 try:
     from torch.utils.tensorboard import SummaryWriter
     TENSORBOARD_FOUND = True
@@ -90,6 +94,39 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         print(f"[Innovation 3] Temporal consistency enabled (lambda_temporal={opt.lambda_temporal})")
     elif temporal_flag:
         print("[Innovation 3] WARNING: Temporal consistency requested but no FLAME binding detected; skipping.")
+    
+    # Efficient Innovation A: Region-Adaptive Loss
+    region_adaptive_loss_fn = None
+    if getattr(opt, 'use_region_adaptive_loss', False) and isinstance(gaussians, FlameGaussianModel):
+        region_adaptive_loss_fn = RegionAdaptiveLoss(
+            flame_model=gaussians.flame_model,
+            weight_eyes=opt.region_weight_eyes,
+            weight_mouth=opt.region_weight_mouth,
+            weight_nose=opt.region_weight_nose,
+            weight_face=opt.region_weight_face
+        ).to('cuda')
+        print(f"[Efficient Innovation A] Region-adaptive loss enabled (weights: eyes={opt.region_weight_eyes}, mouth={opt.region_weight_mouth})")
+    elif getattr(opt, 'use_region_adaptive_loss', False):
+        print("[Efficient Innovation A] WARNING: Region-adaptive loss requested but no FLAME binding detected; skipping.")
+    
+    # Efficient Innovation B: Smart Densification
+    if getattr(opt, 'use_smart_densification', False):
+        gaussians.use_smart_densification = True
+        gaussians.densify_clone_percentile = opt.densify_percentile_clone
+        gaussians.densify_split_percentile = opt.densify_percentile_split
+        print(f"[Efficient Innovation B] Smart densification enabled (clone={opt.densify_percentile_clone}%, split={opt.densify_percentile_split}%)")
+    
+    # Efficient Innovation D: Color Calibration
+    color_calibration_net = None
+    color_optimizer = None
+    if getattr(opt, 'use_color_calibration', False):
+        color_calibration_net = LightweightColorCalibration(
+            hidden_dim=opt.color_net_hidden_dim,
+            num_layers=opt.color_net_layers
+        ).to('cuda')
+        color_optimizer = torch.optim.Adam(color_calibration_net.parameters(), lr=1e-4)
+        color_optimizer.zero_grad(set_to_none=True)
+        print(f"[Efficient Innovation D] Color calibration enabled (hidden_dim={opt.color_net_hidden_dim})")
 
     bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
@@ -176,13 +213,28 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             if (iteration - 1) == debug_from:
                 pipe.debug = True
             render_pkg = render(viewpoint_cam, gaussians, pipe, background)
-            image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
+            image_raw, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
+
+            # Efficient Innovation D: Apply color calibration if enabled
+            if color_calibration_net is not None:
+                image = color_calibration_net(image_raw)
+            else:
+                image = image_raw
 
             # Loss
             gt_image = viewpoint_cam.original_image.cuda()
 
             losses = {}
-            losses['l1'] = l1_loss(image, gt_image) * (1.0 - opt.lambda_dssim)
+            
+            # Efficient Innovation A: Use region-adaptive loss if enabled
+            if region_adaptive_loss_fn is not None:
+                weight_map = region_adaptive_loss_fn.create_simple_weight_map(
+                    image.shape[1], image.shape[2], image.device
+                )
+                losses['l1'] = region_adaptive_loss_fn(image, gt_image, weight_map) * (1.0 - opt.lambda_dssim)
+            else:
+                losses['l1'] = l1_loss(image, gt_image) * (1.0 - opt.lambda_dssim)
+            
             losses['ssim'] = (1.0 - ssim(image, gt_image)) * opt.lambda_dssim
 
             # Innovation 1: Add perceptual loss
@@ -228,6 +280,9 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 if opt.lambda_laplacian != 0:
                     losses['lap'] = gaussians.compute_laplacian_loss() * opt.lambda_laplacian
         
+            if color_calibration_net is not None and getattr(opt, 'lambda_color_reg', 0.0) > 0:
+                losses['color_reg'] = color_calibration_net.regularization_loss() * opt.lambda_color_reg
+
             losses['total'] = sum([v for k, v in losses.items()])
 
         # Ensure tensors used outside autocast are in float32 when needed
@@ -259,6 +314,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                     postfix["percep"] = f"{losses['perceptual']:.{7}f}"
                 if 'temporal' in losses:
                     postfix["temp"] = f"{losses['temporal']:.{7}f}"
+                if 'color_reg' in losses:
+                    postfix["col_reg"] = f"{losses['color_reg']:.{7}f}"
                 progress_bar.set_postfix(postfix)
                 progress_bar.update(10)
             if iteration == opt.iterations:
@@ -286,8 +343,12 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             # Optimizer step
             if iteration < opt.iterations:
                 scaler.step(gaussians.optimizer)
+                if color_optimizer is not None:
+                    scaler.step(color_optimizer)
                 scaler.update()
                 gaussians.optimizer.zero_grad(set_to_none = True)
+                if color_optimizer is not None:
+                    color_optimizer.zero_grad(set_to_none=True)
 
             if (iteration in checkpoint_iterations):
                 print("[ITER {}] Saving Checkpoint".format(iteration))
@@ -333,6 +394,8 @@ def training_report(tb_writer, iteration, losses, elapsed, testing_iterations, s
             tb_writer.add_scalar('train_loss_patches/perceptual_loss', losses['perceptual'].item(), iteration)
         if 'temporal' in losses:
             tb_writer.add_scalar('train_loss_patches/temporal_loss', losses['temporal'].item(), iteration)
+        if 'color_reg' in losses:
+            tb_writer.add_scalar('train_loss_patches/color_reg_loss', losses['color_reg'].item(), iteration)
         tb_writer.add_scalar('train_loss_patches/total_loss', losses['total'].item(), iteration)
         tb_writer.add_scalar('iter_time', elapsed, iteration)
 

@@ -74,6 +74,11 @@ class GaussianModel:
         
         # Innovation 2: Adaptive densification placeholder
         self.adaptive_densification_strategy = None
+        
+        # Smart densification flags
+        self.use_smart_densification = False
+        self.densify_clone_percentile = 75.0
+        self.densify_split_percentile = 90.0
 
     def capture(self):
         return (
@@ -516,8 +521,29 @@ class GaussianModel:
         grads = self.xyz_gradient_accum / self.denom
         grads[grads.isnan()] = 0.0
 
+        # Smart densification: use percentile-based thresholds
+        if hasattr(self, 'use_smart_densification') and self.use_smart_densification:
+            grads_norm = torch.norm(grads, dim=-1)
+            valid_grads = grads_norm[grads_norm > 0]
+            
+            if valid_grads.numel() > 0:
+                clone_threshold = torch.quantile(valid_grads, self.densify_clone_percentile / 100.0).item()
+                split_threshold = torch.quantile(valid_grads, self.densify_split_percentile / 100.0).item()
+                
+                # Use higher threshold for split to be more conservative
+                clone_threshold = max(clone_threshold, max_grad * 0.5)
+                split_threshold = max(split_threshold, max_grad)
+                
+                print(f"[Smart Densification] Clone threshold: {clone_threshold:.6f}, Split threshold: {split_threshold:.6f}")
+                
+                self.densify_and_clone(grads, clone_threshold, extent)
+                self.densify_and_split(grads, split_threshold, extent)
+            else:
+                # Fallback to fixed threshold if no valid gradients
+                self.densify_and_clone(grads, max_grad, extent)
+                self.densify_and_split(grads, max_grad, extent)
         # Innovation 2: Use adaptive thresholds if available
-        if hasattr(self, 'adaptive_densification_strategy') and self.adaptive_densification_strategy is not None and self.binding is not None:
+        elif hasattr(self, 'adaptive_densification_strategy') and self.adaptive_densification_strategy is not None and self.binding is not None:
             adaptive_grad_threshold = self.adaptive_densification_strategy.get_adaptive_threshold(
                 self.binding, max_grad
             )
