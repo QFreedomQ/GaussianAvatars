@@ -912,51 +912,526 @@ chmod +x run_all_experiments.sh
 
 ## 6. 评估与分析
 
-### 6.1 离线渲染
+GaussianAvatars 的评估分为三个主要任务，每个任务评估模型的不同能力：
 
-对每个实验进行离线渲染，生成评估所需的图像。
+1. **Novel-View Synthesis (新视角合成)**: 评估在训练时未见过的相机视角下的渲染质量
+2. **Self-Reenactment (自我重演)**: 评估用新的表情和动作驱动同一身份的头部化身
+3. **Cross-Identity Reenactment (跨身份重演)**: 评估将一个人的表情和动作迁移到另一个人的能力
+
+### 6.1 Novel-View Synthesis (新视角合成)
+
+#### 6.1.1 任务说明
+
+Novel-View Synthesis 评估模型在训练集中未见过的相机视角下的渲染质量。这是评估 3D 几何表示和外观建模能力的关键任务。
+
+**评估内容**:
+- 使用验证集（val split）进行评估
+- 验证集包含与训练集不同的相机视角
+- 测试模型对新视角的泛化能力
+
+#### 6.1.2 离线渲染
 
 ```bash
-# 渲染单个实验
+# 渲染单个实验的验证集
 ITER=600000  # 使用最后一次迭代
 python render.py \
   -m ${OUTPUT_DIR}/exp1_baseline_${SUBJECT} \
   --iteration ${ITER} \
-  --skip_train
+  --skip_train --skip_test
 
-# 批量渲染所有实验
+# 批量渲染所有实验的验证集
 for exp in exp1_baseline exp2_perceptual exp3_adaptive exp4_temporal exp5_perc_adapt exp6_perc_temp exp7_adapt_temp exp8_full; do
-  echo "Rendering ${exp}..."
+  echo "Rendering Novel-View for ${exp}..."
   python render.py \
     -m ${OUTPUT_DIR}/${exp}_${SUBJECT} \
     --iteration ${ITER} \
-    --skip_train
+    --skip_train --skip_test
 done
 ```
 
 渲染结果保存在：
 - `${OUTPUT_DIR}/${exp}_${SUBJECT}/val/ours_${ITER}/renders/`
-- `${OUTPUT_DIR}/${exp}_${SUBJECT}/test/ours_${ITER}/renders/`
+- `${OUTPUT_DIR}/${exp}_${SUBJECT}/val/ours_${ITER}/gt/`
 
-### 6.2 计算评估指标
-
-#### 使用内置评估工具
+#### 6.1.3 计算评估指标
 
 ```bash
-# 评估单个实验
+# 修改 metrics.py 以评估 val 集
+# 创建评估脚本 evaluate_novel_view.py
+
+cat > evaluate_novel_view.py << 'EOF'
+import os
+import sys
+from pathlib import Path
+from PIL import Image
+import torch
+import torchvision.transforms.functional as tf
+from utils.loss_utils import ssim
+from lpipsPyTorch import lpips
+import json
+from tqdm import tqdm
+from utils.image_utils import psnr
+
+def readImages(renders_dir, gt_dir):
+    renders = []
+    gts = []
+    image_names = []
+    for fname in sorted(os.listdir(renders_dir)):
+        if fname.endswith('.png'):
+            render = Image.open(renders_dir / fname)
+            gt = Image.open(gt_dir / fname)
+            renders.append(tf.to_tensor(render).unsqueeze(0)[:, :3, :, :].cuda())
+            gts.append(tf.to_tensor(gt).unsqueeze(0)[:, :3, :, :].cuda())
+            image_names.append(fname)
+    return renders, gts, image_names
+
+def evaluate_novel_view(model_path, iteration):
+    val_dir = Path(model_path) / "val" / f"ours_{iteration}"
+    renders_dir = val_dir / "renders"
+    gt_dir = val_dir / "gt"
+    
+    if not renders_dir.exists() or not gt_dir.exists():
+        print(f"Skipping {model_path}: renders or gt not found")
+        return None
+    
+    renders, gts, image_names = readImages(renders_dir, gt_dir)
+    
+    ssims = []
+    psnrs = []
+    lpipss = []
+    
+    for idx in tqdm(range(len(renders)), desc=f"Evaluating {model_path}"):
+        ssims.append(ssim(renders[idx], gts[idx]))
+        psnrs.append(psnr(renders[idx], gts[idx]))
+        lpipss.append(lpips(renders[idx], gts[idx], net_type='vgg'))
+    
+    results = {
+        "SSIM": torch.tensor(ssims).mean().item(),
+        "PSNR": torch.tensor(psnrs).mean().item(),
+        "LPIPS": torch.tensor(lpipss).mean().item()
+    }
+    
+    print(f"  Novel-View Synthesis Results:")
+    print(f"    SSIM : {results['SSIM']:.7f}")
+    print(f"    PSNR : {results['PSNR']:.7f}")
+    print(f"    LPIPS: {results['LPIPS']:.7f}\n")
+    
+    return results
+
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--model_paths', '-m', nargs="+", required=True)
+    parser.add_argument('--iteration', type=int, default=600000)
+    args = parser.parse_args()
+    
+    all_results = {}
+    for model_path in args.model_paths:
+        print(f"\n{'='*60}")
+        print(f"Model: {model_path}")
+        print('='*60)
+        results = evaluate_novel_view(model_path, args.iteration)
+        if results:
+            all_results[model_path] = results
+    
+    # 保存结果
+    with open('novel_view_results.json', 'w') as f:
+        json.dump(all_results, f, indent=4)
+    
+    print("\n" + "="*60)
+    print("Novel-View Synthesis Summary")
+    print("="*60)
+    for model_path, results in all_results.items():
+        model_name = os.path.basename(model_path)
+        print(f"{model_name:30s} PSNR: {results['PSNR']:6.3f} SSIM: {results['SSIM']:.4f} LPIPS: {results['LPIPS']:.4f}")
+    print("="*60)
+EOF
+
+# 运行评估
+python evaluate_novel_view.py -m \
+  ${OUTPUT_DIR}/exp1_baseline_${SUBJECT} \
+  ${OUTPUT_DIR}/exp2_perceptual_${SUBJECT} \
+  ${OUTPUT_DIR}/exp3_adaptive_${SUBJECT} \
+  ${OUTPUT_DIR}/exp4_temporal_${SUBJECT} \
+  ${OUTPUT_DIR}/exp5_perc_adapt_${SUBJECT} \
+  ${OUTPUT_DIR}/exp6_perc_temp_${SUBJECT} \
+  ${OUTPUT_DIR}/exp7_adapt_temp_${SUBJECT} \
+  ${OUTPUT_DIR}/exp8_full_${SUBJECT}
+```
+
+#### 6.1.4 预期结果
+
+| 实验 | Val PSNR↑ | Val SSIM↑ | Val LPIPS↓ | 说明 |
+|-----|---------|----------|-----------|------|
+| Baseline | 32.5 | 0.945 | 0.082 | 基线 |
+| Perceptual | 33.2 (+0.7) | 0.955 (+1.1%) | 0.070 (-14.6%) | 感知损失改善细节 |
+| Adaptive | 32.8 (+0.3) | 0.948 (+0.3%) | 0.078 (-4.9%) | 效率提升 |
+| Temporal | 32.6 (+0.1) | 0.947 (+0.2%) | 0.080 (-2.4%) | 对单帧影响小 |
+| **Full** | **33.8 (+1.3)** | **0.962 (+1.8%)** | **0.065 (-20.7%)** | **最佳** |
+
+---
+
+### 6.2 Self-Reenactment (自我重演)
+
+#### 6.2.1 任务说明
+
+Self-Reenactment 评估模型在驱动同一身份头部做出新的表情和动作时的质量。这是评估 FLAME 参数化和动态建模能力的关键任务。
+
+**评估内容**:
+- 使用测试集（test split）进行评估
+- 测试集包含训练时未见过的表情和动作组合
+- 测试模型对新动作的泛化能力和时序一致性
+
+#### 6.2.2 离线渲染
+
+```bash
+# 渲染单个实验的测试集（全部视角）
+python render.py \
+  -m ${OUTPUT_DIR}/exp1_baseline_${SUBJECT} \
+  --iteration ${ITER} \
+  --skip_train --skip_val
+
+# 渲染单个实验的测试集（仅正面视角）
+python render.py \
+  -m ${OUTPUT_DIR}/exp1_baseline_${SUBJECT} \
+  --iteration ${ITER} \
+  --skip_train --skip_val \
+  --select_camera_id 8  # 正面视角
+
+# 批量渲染所有实验的测试集
+for exp in exp1_baseline exp2_perceptual exp3_adaptive exp4_temporal exp5_perc_adapt exp6_perc_temp exp7_adapt_temp exp8_full; do
+  echo "Rendering Self-Reenactment for ${exp}..."
+  python render.py \
+    -m ${OUTPUT_DIR}/${exp}_${SUBJECT} \
+    --iteration ${ITER} \
+    --skip_train --skip_val
+done
+```
+
+渲染结果保存在：
+- `${OUTPUT_DIR}/${exp}_${SUBJECT}/test/ours_${ITER}/renders/`
+- `${OUTPUT_DIR}/${exp}_${SUBJECT}/test/ours_${ITER}/gt/`
+
+#### 6.2.3 计算评估指标
+
+```bash
+# 使用内置评估工具评估测试集
 python metrics.py \
   -m ${OUTPUT_DIR}/exp1_baseline_${SUBJECT}
 
-# 批量评估
+# 批量评估所有实验
 for exp in exp1_baseline exp2_perceptual exp3_adaptive exp4_temporal exp5_perc_adapt exp6_perc_temp exp7_adapt_temp exp8_full; do
-  echo "Evaluating ${exp}..."
+  echo "Evaluating Self-Reenactment for ${exp}..."
   python metrics.py -m ${OUTPUT_DIR}/${exp}_${SUBJECT}
 done
 ```
 
-#### 自定义评估脚本
+#### 6.2.4 时序一致性评估
 
-创建 `evaluate_all.py`:
+Self-Reenactment 还需要评估时序一致性，确保相邻帧之间的平滑过渡。
+
+```bash
+# 创建时序一致性评估脚本
+cat > evaluate_temporal_consistency.py << 'EOF'
+import os
+import cv2
+import numpy as np
+from pathlib import Path
+import json
+from tqdm import tqdm
+
+def compute_temporal_consistency(renders_dir):
+    """计算相邻帧之间的差异"""
+    frame_files = sorted([f for f in os.listdir(renders_dir) if f.endswith('.png')])
+    
+    if len(frame_files) < 2:
+        return None
+    
+    frame_diffs = []
+    for i in tqdm(range(len(frame_files) - 1), desc="Computing temporal consistency"):
+        frame1 = cv2.imread(str(renders_dir / frame_files[i])).astype(float) / 255.0
+        frame2 = cv2.imread(str(renders_dir / frame_files[i+1])).astype(float) / 255.0
+        
+        # 计算帧间差异 (L2 距离)
+        diff = np.mean((frame1 - frame2) ** 2)
+        frame_diffs.append(diff)
+    
+    return {
+        "mean_frame_diff": np.mean(frame_diffs),
+        "std_frame_diff": np.std(frame_diffs),
+        "max_frame_diff": np.max(frame_diffs)
+    }
+
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--model_paths', '-m', nargs="+", required=True)
+    parser.add_argument('--iteration', type=int, default=600000)
+    args = parser.parse_args()
+    
+    all_results = {}
+    for model_path in args.model_paths:
+        test_dir = Path(model_path) / "test" / f"ours_{args.iteration}" / "renders"
+        if test_dir.exists():
+            print(f"Evaluating temporal consistency for {model_path}")
+            results = compute_temporal_consistency(test_dir)
+            if results:
+                all_results[model_path] = results
+                print(f"  Mean frame diff: {results['mean_frame_diff']:.6f}")
+                print(f"  Std frame diff:  {results['std_frame_diff']:.6f}")
+                print(f"  Max frame diff:  {results['max_frame_diff']:.6f}\n")
+    
+    with open('temporal_consistency_results.json', 'w') as f:
+        json.dump(all_results, f, indent=4)
+    
+    print("\n" + "="*60)
+    print("Temporal Consistency Summary (lower is better)")
+    print("="*60)
+    for model_path, results in all_results.items():
+        model_name = os.path.basename(model_path)
+        print(f"{model_name:30s} Mean: {results['mean_frame_diff']:.6f} Std: {results['std_frame_diff']:.6f}")
+    print("="*60)
+EOF
+
+# 运行时序一致性评估
+python evaluate_temporal_consistency.py -m \
+  ${OUTPUT_DIR}/exp1_baseline_${SUBJECT} \
+  ${OUTPUT_DIR}/exp4_temporal_${SUBJECT} \
+  ${OUTPUT_DIR}/exp8_full_${SUBJECT}
+```
+
+#### 6.2.5 预期结果
+
+| 实验 | Test PSNR↑ | Test SSIM↑ | Test LPIPS↓ | 帧间差异↓ | 说明 |
+|-----|---------|----------|-----------|---------|------|
+| Baseline | 31.8 | 0.938 | 0.095 | 0.0042 | 基线 |
+| Perceptual | 32.5 (+0.7) | 0.948 (+1.1%) | 0.078 (-17.9%) | 0.0041 | 细节改善 |
+| Temporal | 31.9 (+0.1) | 0.940 (+0.2%) | 0.092 (-3.2%) | **0.0028** | **时序平滑** |
+| **Full** | **33.1 (+1.3)** | **0.955 (+1.8%)** | **0.072 (-24.2%)** | **0.0030** | **综合最佳** |
+
+**关键观察**:
+- 时序一致性模块显著降低帧间差异（-33%）
+- 感知损失对动态区域（嘴巴、眼睛）质量提升明显
+- 全部创新协同后达到最佳效果
+
+---
+
+### 6.3 Cross-Identity Reenactment (跨身份重演)
+
+#### 6.3.1 任务说明
+
+Cross-Identity Reenactment 评估将一个人的表情和动作迁移到另一个人的能力。这是评估模型泛化能力和身份保持能力的最具挑战性的任务。
+
+**评估内容**:
+- 使用目标人物的 FLAME 参数驱动源人物的头部模型
+- 评估身份保持能力（是否保持源人物的外观）
+- 评估动作迁移质量（是否准确复现目标动作）
+
+#### 6.3.2 离线渲染
+
+```bash
+# 设置目标身份
+TGT_SUBJECT=218  # 目标人物ID
+
+# 单个实验的跨身份重演（使用目标人物的10个预设动作序列）
+python render.py \
+  -m ${OUTPUT_DIR}/exp8_full_${SUBJECT} \
+  -t data/UNION10_${TGT_SUBJECT}_EMO1234EXP234589_v16_DS2-0.5x_lmkSTAR_teethV3_SMOOTH_offsetS_whiteBg_maskBelowLine \
+  --select_camera_id 8 \
+  --iteration ${ITER}
+
+# 单个实验的跨身份重演（使用目标人物的自由动作序列）
+python render.py \
+  -m ${OUTPUT_DIR}/exp8_full_${SUBJECT} \
+  -t data/${TGT_SUBJECT}_FREE_v16_DS2-0.5x_lmkSTAR_teethV3_SMOOTH_offsetS_whiteBg_maskBelowLine \
+  --select_camera_id 8 \
+  --iteration ${ITER}
+
+# 批量渲染多个目标身份
+TARGET_SUBJECTS=(218 251 330)  # 多个目标人物
+for exp in exp1_baseline exp8_full; do
+  for tgt in "${TARGET_SUBJECTS[@]}"; do
+    echo "Rendering Cross-Identity: ${exp} -> Subject ${tgt}..."
+    python render.py \
+      -m ${OUTPUT_DIR}/${exp}_${SUBJECT} \
+      -t data/UNION10_${tgt}_EMO1234EXP234589_v16_DS2-0.5x_lmkSTAR_teethV3_SMOOTH_offsetS_whiteBg_maskBelowLine \
+      --select_camera_id 8 \
+      --iteration ${ITER}
+  done
+done
+```
+
+渲染结果保存在：
+- `${OUTPUT_DIR}/${exp}_${SUBJECT}/UNION10_${TGT_SUBJECT}_*/ours_${ITER}/renders/`
+
+#### 6.3.3 定性评估
+
+由于跨身份重演没有ground truth，评估主要依赖定性分析：
+
+```bash
+# 生成对比视频
+mkdir -p cross_identity_comparison
+
+# 对比源身份和跨身份重演结果
+for tgt in 218 251 330; do
+  ffmpeg -framerate 25 \
+    -i ${OUTPUT_DIR}/exp8_full_${SUBJECT}/UNION10_${tgt}_*/ours_${ITER}/renders/%05d.png \
+    -c:v libx264 -pix_fmt yuv420p \
+    cross_identity_comparison/subject_${SUBJECT}_to_${tgt}.mp4
+done
+
+# 创建并排对比视频
+ffmpeg \
+  -i cross_identity_comparison/subject_${SUBJECT}_to_218.mp4 \
+  -i cross_identity_comparison/subject_${SUBJECT}_to_251.mp4 \
+  -i cross_identity_comparison/subject_${SUBJECT}_to_330.mp4 \
+  -filter_complex "[0:v][1:v][2:v]hstack=inputs=3[v]" \
+  -map "[v]" \
+  cross_identity_comparison/all_targets.mp4
+```
+
+#### 6.3.4 身份保持评估
+
+评估跨身份重演是否保持了源人物的外观特征：
+
+```bash
+# 创建身份保持评估脚本（使用预训练的人脸识别模型）
+cat > evaluate_identity_preservation.py << 'EOF'
+import os
+import cv2
+import numpy as np
+from pathlib import Path
+import json
+from tqdm import tqdm
+
+try:
+    import face_recognition
+    FACE_RECOGNITION_AVAILABLE = True
+except ImportError:
+    print("Warning: face_recognition not installed. Install with: pip install face_recognition")
+    FACE_RECOGNITION_AVAILABLE = False
+
+def compute_identity_similarity(source_dir, reenact_dir):
+    """计算源身份和重演结果的面部相似度"""
+    if not FACE_RECOGNITION_AVAILABLE:
+        print("Skipping identity evaluation: face_recognition not available")
+        return None
+    
+    # 读取源身份的参考图像
+    source_files = sorted([f for f in os.listdir(source_dir) if f.endswith('.png')])[:10]
+    source_encodings = []
+    
+    for fname in source_files:
+        img = face_recognition.load_image_file(str(source_dir / fname))
+        encodings = face_recognition.face_encodings(img)
+        if len(encodings) > 0:
+            source_encodings.append(encodings[0])
+    
+    if len(source_encodings) == 0:
+        return None
+    
+    # 计算源身份的平均编码
+    source_avg = np.mean(source_encodings, axis=0)
+    
+    # 评估重演结果的身份保持
+    reenact_files = sorted([f for f in os.listdir(reenact_dir) if f.endswith('.png')])
+    similarities = []
+    
+    for fname in tqdm(reenact_files, desc="Computing identity similarity"):
+        img = face_recognition.load_image_file(str(reenact_dir / fname))
+        encodings = face_recognition.face_encodings(img)
+        if len(encodings) > 0:
+            # 计算余弦相似度
+            similarity = 1 - np.linalg.norm(source_avg - encodings[0])
+            similarities.append(similarity)
+    
+    if len(similarities) == 0:
+        return None
+    
+    return {
+        "mean_similarity": np.mean(similarities),
+        "std_similarity": np.std(similarities),
+        "min_similarity": np.min(similarities)
+    }
+
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--source_model', required=True, help="Source model path")
+    parser.add_argument('--target_subjects', nargs="+", required=True, help="Target subject IDs")
+    parser.add_argument('--iteration', type=int, default=600000)
+    args = parser.parse_args()
+    
+    # 获取源身份的参考图像
+    source_test_dir = Path(args.source_model) / "test" / f"ours_{args.iteration}" / "renders"
+    
+    all_results = {}
+    for tgt_subject in args.target_subjects:
+        # 查找跨身份重演结果目录
+        model_dir = Path(args.source_model)
+        reenact_dirs = list(model_dir.glob(f"UNION10_{tgt_subject}_*/ours_{args.iteration}/renders"))
+        
+        if len(reenact_dirs) > 0:
+            reenact_dir = reenact_dirs[0]
+            print(f"\nEvaluating identity preservation for target {tgt_subject}")
+            results = compute_identity_similarity(source_test_dir, reenact_dir)
+            if results:
+                all_results[tgt_subject] = results
+                print(f"  Mean similarity: {results['mean_similarity']:.4f}")
+                print(f"  Std similarity:  {results['std_similarity']:.4f}")
+                print(f"  Min similarity:  {results['min_similarity']:.4f}")
+    
+    with open('identity_preservation_results.json', 'w') as f:
+        json.dump(all_results, f, indent=4)
+    
+    if all_results:
+        print("\n" + "="*60)
+        print("Identity Preservation Summary (higher is better)")
+        print("="*60)
+        for tgt_subject, results in all_results.items():
+            print(f"Target {tgt_subject}: Mean Similarity = {results['mean_similarity']:.4f}")
+        print("="*60)
+EOF
+
+# 运行身份保持评估（需要安装 face_recognition）
+# pip install face_recognition
+python evaluate_identity_preservation.py \
+  --source_model ${OUTPUT_DIR}/exp8_full_${SUBJECT} \
+  --target_subjects 218 251 330
+```
+
+#### 6.3.5 评估指标
+
+由于没有 ground truth，跨身份重演主要使用以下指标：
+
+| 指标 | 说明 | 目标 |
+|------|------|------|
+| **身份相似度** | 与源身份的面部特征相似度 | ↑ 越高越好 (>0.85) |
+| **动作准确性** | 定性评估表情和动作是否准确 | 人工评估 |
+| **时序平滑性** | 帧间差异，评估动画流畅度 | ↓ 越低越好 |
+| **渲染质量** | 无伪影、无闪烁、细节清晰 | 人工评估 |
+
+#### 6.3.6 预期结果
+
+| 实验 | 身份相似度↑ | 帧间差异↓ | 定性评分 | 说明 |
+|-----|-----------|---------|---------|------|
+| Baseline | 0.82 | 0.0055 | 3.2/5.0 | 身份保持较弱 |
+| Perceptual | 0.85 | 0.0053 | 3.8/5.0 | 细节更清晰 |
+| Temporal | 0.83 | **0.0038** | 3.5/5.0 | **动画更流畅** |
+| **Full** | **0.88** | **0.0040** | **4.3/5.0** | **综合最佳** |
+
+**关键观察**:
+- 感知损失提升面部细节，增强身份识别度
+- 时序一致性确保跨身份动画的流畅性
+- 全部创新显著提升跨身份重演的质量和自然度
+
+---
+
+### 6.4 综合评估工具
+
+#### 6.4.1 批量评估脚本
+
+创建 `evaluate_all.py` 用于批量评估所有实验的三个任务：
 
 ```python
 import os
@@ -1026,12 +1501,12 @@ for exp in experiments:
     
     exp_dir = Path(output_dir) / f"{exp}_{subject}"
     
-    # Val set metrics
+    # Novel-View Synthesis (Val set)
     val_render_dir = exp_dir / f"val/ours_{iter_num}/renders"
     val_gt_dir = exp_dir / f"val/ours_{iter_num}/gt"
     val_metrics = compute_metrics(val_render_dir, val_gt_dir)
     
-    # Test set metrics
+    # Self-Reenactment (Test set)
     test_render_dir = exp_dir / f"test/ours_{iter_num}/renders"
     test_gt_dir = exp_dir / f"test/ours_{iter_num}/gt"
     test_metrics = compute_metrics(test_render_dir, test_gt_dir)
@@ -1041,8 +1516,8 @@ for exp in experiments:
     num_gaussians = count_gaussians(ply_path)
     
     results[exp] = {
-        'val': val_metrics,
-        'test': test_metrics,
+        'novel_view': val_metrics,  # Novel-View Synthesis
+        'self_reenact': test_metrics,  # Self-Reenactment
         'num_gaussians': num_gaussians
     }
 
@@ -1051,14 +1526,18 @@ with open('evaluation_results.json', 'w') as f:
     json.dump(results, f, indent=4)
 
 # 打印结果表格
-print("\n" + "="*80)
-print("Evaluation Results Summary")
-print("="*80)
-print(f"{'Experiment':<20} {'Val PSNR':>10} {'Val SSIM':>10} {'Val LPIPS':>10} {'#Gaussians':>12}")
-print("-"*80)
+print("\n" + "="*100)
+print("Comprehensive Evaluation Results Summary")
+print("="*100)
+print(f"{'Experiment':<20} {'NV-PSNR':>10} {'NV-SSIM':>10} {'NV-LPIPS':>10} {'SR-PSNR':>10} {'SR-SSIM':>10} {'SR-LPIPS':>10} {'#Gauss':>10}")
+print("-"*100)
 for exp, data in results.items():
-    print(f"{exp:<20} {data['val']['psnr']:>10.3f} {data['val']['ssim']:>10.4f} {data['val']['lpips']:>10.4f} {data['num_gaussians']:>12,}")
-print("="*80)
+    print(f"{exp:<20} "
+          f"{data['novel_view']['psnr']:>10.3f} {data['novel_view']['ssim']:>10.4f} {data['novel_view']['lpips']:>10.4f} "
+          f"{data['self_reenact']['psnr']:>10.3f} {data['self_reenact']['ssim']:>10.4f} {data['self_reenact']['lpips']:>10.4f} "
+          f"{data['num_gaussians']:>10,}")
+print("="*100)
+print("NV: Novel-View Synthesis, SR: Self-Reenactment")
 ```
 
 运行：
@@ -1067,7 +1546,25 @@ print("="*80)
 python evaluate_all.py
 ```
 
-### 6.3 FPS 基准测试
+#### 6.4.2 评估指标说明
+
+| 指标 | 全称 | 范围 | 说明 | 越好 |
+|------|-----|------|------|-----|
+| **PSNR** | Peak Signal-to-Noise Ratio | 0-∞ dB | 峰值信噪比，衡量像素级误差 | ↑ 越高越好 |
+| **SSIM** | Structural Similarity Index | 0-1 | 结构相似性，衡量结构保持 | ↑ 越高越好 |
+| **LPIPS** | Learned Perceptual Image Patch Similarity | 0-∞ | 感知相似性，衡量人眼感知差异 | ↓ 越低越好 |
+
+**指标解读**:
+
+- **PSNR > 30 dB**: 较好的重建质量
+- **PSNR > 32 dB**: 优秀的重建质量
+- **SSIM > 0.95**: 结构高度相似
+- **LPIPS < 0.10**: 感知质量较好
+- **LPIPS < 0.07**: 感知质量优秀
+
+---
+
+### 6.5 FPS 基准测试
 
 测试渲染速度：
 
@@ -1090,7 +1587,7 @@ for exp in exp1_baseline exp2_perceptual exp3_adaptive exp4_temporal exp5_perc_a
 done
 ```
 
-### 6.4 TensorBoard 可视化
+### 6.6 TensorBoard 可视化
 
 ```bash
 # 启动 TensorBoard
@@ -1107,7 +1604,7 @@ tensorboard --logdir ${OUTPUT_DIR} --port 6006
 5. `train_loss_patches/temporal_loss`: 时序损失
 6. `total_points`: 高斯点数量变化
 
-### 6.5 结果汇总与分析
+### 6.7 结果汇总与分析
 
 创建结果汇总脚本 `summarize_results.py`:
 
@@ -1192,7 +1689,7 @@ plt.show()
 python summarize_results.py
 ```
 
-### 6.6 预期结果
+### 6.8 预期结果
 
 基于 Subject 306 的预期结果：
 
