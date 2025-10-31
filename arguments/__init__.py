@@ -76,22 +76,22 @@ class PipelineParams(ParamGroup):
 class OptimizationParams(ParamGroup):
     def __init__(self, parser):
         # 3D Gaussians
-        self.iterations = 600_000  # 30_000 (original)
-        self.position_lr_init = 0.005  # (scaled up according to mean triangle scale)  #0.00016 (original)
-        self.position_lr_final = 0.00005  # (scaled up according to mean triangle scale) # 0.0000016 (original)
+        self.iterations = 600_000
+        self.position_lr_init = 0.005
+        self.position_lr_final = 0.00005
         self.position_lr_delay_mult = 0.01
-        self.position_lr_max_steps = 600_000  # 30_000 (original)
+        self.position_lr_max_steps = 600_000
         self.feature_lr = 0.0025
         self.opacity_lr = 0.05
-        self.scaling_lr = 0.017  # (scaled up according to mean triangle scale)  # 0.005 (original)
+        self.scaling_lr = 0.017
         self.rotation_lr = 0.001
-        self.densification_interval = 2_000  # 100 (original)
-        self.opacity_reset_interval = 60_000 # 3000 (original)
-        self.densify_from_iter = 10_000  # 500 (original)
-        self.densify_until_iter = 600_000  # 15_000 (original)
+        self.densification_interval = 2_000
+        self.opacity_reset_interval = 60_000
+        self.densify_from_iter = 10_000
+        self.densify_until_iter = 600_000
         self.densify_grad_threshold = 0.0002
         
-        # GaussianAvatars
+        # GaussianAvatars (FLAME parameters)
         self.flame_expr_lr = 1e-3
         self.flame_trans_lr = 1e-6
         self.flame_pose_lr = 1e-5
@@ -105,26 +105,41 @@ class OptimizationParams(ParamGroup):
         self.metric_scale = False
         self.lambda_dynamic_offset = 0.
         self.lambda_laplacian = 0.
-        self.lambda_dynamic_offset_std = 0  #1.
+        self.lambda_dynamic_offset_std = 0
         
-        # Innovation 1: Perceptual Loss Enhancement
-        # Source: InstantAvatar (CVPR 2023), NHA (CVPR 2023)
-        self.lambda_perceptual = 0.0  # Weight for VGG-based perceptual loss (default: disabled)
-        self.use_vgg_loss = True  # Enable VGG perceptual loss (effective when perceptual weight > 0)
-        self.use_lpips_loss = False  # LPIPS is slower, disabled by default
-        
-        # Innovation 2: Adaptive Densification Strategy
-        # Source: Dynamic 3D Gaussians (CVPR 2024), MonoGaussianAvatar
-        self.use_adaptive_densification = False  # Enable region-aware densification (default: disabled)
-        self.adaptive_densify_ratio = 1.5  # Threshold multiplier for important regions
-        
-        # Innovation 3: Temporal Consistency Regularization
-        # Source: PointAvatar (CVPR 2023), FlashAvatar (ICCV 2023)
-        self.lambda_temporal = 0.01  # Weight for temporal consistency loss
-        self.use_temporal_consistency = False  # Enable temporal smoothness (default: disabled)
-
         # Mixed precision
-        self.use_amp = False  # Enable automatic mixed precision (default: disabled)
+        self.use_amp = False
+
+        # ========== Five Modular Innovations ==========
+        
+        # Innovation 1: Region-Adaptive Loss Weighting
+        self.use_region_adaptive_loss = False
+        self.region_weight_eyes = 2.0
+        self.region_weight_mouth = 2.0
+        self.region_weight_nose = 1.5
+        self.region_weight_face = 1.2
+
+        # Innovation 2: Smart Densification
+        self.use_smart_densification = False
+        self.densify_percentile_clone = 75.0
+        self.densify_percentile_split = 90.0
+
+        # Innovation 3: Progressive Resolution Training
+        self.use_progressive_resolution = False
+        self.resolution_schedule = "0.5,0.75,1.0"
+        self.resolution_milestones = "100000,300000"
+
+        # Innovation 4: Color Calibration Network
+        self.use_color_calibration = False
+        self.color_net_hidden_dim = 16
+        self.color_net_layers = 3
+        self.lambda_color_reg = 1e-4
+
+        # Innovation 5: Contrastive Regularization
+        self.use_contrastive_reg = False
+        self.lambda_contrastive = 0.01
+        self.contrastive_cache_size = 2
+        self.contrastive_downsample = 8
 
         super().__init__(parser, "Optimization Parameters")
 
