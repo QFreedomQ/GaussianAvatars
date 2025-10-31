@@ -20,7 +20,7 @@ This repository includes **5 lightweight, efficient innovations** that significa
 
 **Key Benefits:**
 - PSNR: +0.7~1.2 dB
-- Training Time: +10% (vs. baseline)
+- Training Time: +10% to +15% (vs. baseline)
 - Gaussian Points: +25% (vs. +556% with naive approaches)
 - **20x better cost-performance ratio**
 

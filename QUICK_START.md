@@ -16,7 +16,7 @@ python train.py \
   --use_amp
 ```
 
-**Result**: +0.7~1.2 dB PSNR improvement with only +10% training time.
+**Result**: +0.7~1.2 dB PSNR improvement with +10-15% training time.
 
 ---
 
