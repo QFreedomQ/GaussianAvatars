@@ -17,10 +17,6 @@ from utils.graphics_utils import compute_face_orientation
 # from pytorch3d.transforms import matrix_to_quaternion
 from roma import rotmat_to_unitquat, quat_xyzw_to_wxyz
 
-# Innovation 2: Adaptive Densification Strategy
-from utils.adaptive_densification import AdaptiveDensificationStrategy
-
-
 class FlameGaussianModel(GaussianModel):
     def __init__(self, sh_degree : int, disable_flame_static_offset=False, not_finetune_flame_params=False, n_shape=300, n_expr=100):
         super().__init__(sh_degree)
@@ -37,10 +33,6 @@ class FlameGaussianModel(GaussianModel):
         ).cuda()
         self.flame_param = None
         self.flame_param_orig = None
-
-        # Innovation 2: Adaptive densification flags
-        self.use_adaptive_densification = False
-        self.adaptive_densify_ratio = 1.5
 
         # binding is initialized once the mesh topology is known
         if self.binding is None:
@@ -180,29 +172,6 @@ class FlameGaussianModel(GaussianModel):
     
     def training_setup(self, training_args):
         super().training_setup(training_args)
-
-        # Innovation 2: Initialize adaptive densification strategy
-        if hasattr(training_args, 'use_adaptive_densification'):
-            self.use_adaptive_densification = training_args.use_adaptive_densification
-        if hasattr(training_args, 'adaptive_densify_ratio'):
-            self.adaptive_densify_ratio = training_args.adaptive_densify_ratio
-        
-        if self.use_adaptive_densification:
-            faces_tensor = self.flame_model.faces
-            if isinstance(faces_tensor, torch.Tensor):
-                faces_tensor = faces_tensor.squeeze(0)
-                num_faces = faces_tensor.shape[0]
-            else:
-                num_faces = len(faces_tensor)
-            self.adaptive_densification_strategy = AdaptiveDensificationStrategy(
-                num_faces=num_faces,
-                flame_model=self.flame_model,
-                importance_ratio=self.adaptive_densify_ratio
-            )
-            print(f"[Innovation 2] Enabled adaptive densification with ratio {self.adaptive_densify_ratio}")
-        else:
-            self.adaptive_densification_strategy = None
-            print("[Innovation 2] Adaptive densification disabled")
 
         if self.not_finetune_flame_params:
             return

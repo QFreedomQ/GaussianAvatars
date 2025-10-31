@@ -23,8 +23,9 @@ from utils.sh_utils import RGB2SH
 from simple_knn._C import distCUDA2
 from utils.graphics_utils import BasicPointCloud
 from utils.general_utils import strip_symmetric, build_scaling_rotation
+from innovations.smart_densification import SmartDensificationMixin
 
-class GaussianModel:
+class GaussianModel(SmartDensificationMixin):
 
     def setup_functions(self):
         def build_covariance_from_scaling_rotation(scaling, scaling_modifier, rotation):
@@ -72,10 +73,7 @@ class GaussianModel:
         self.timestep = None  # the current timestep
         self.num_timesteps = 1  # required by viewers
         
-        # Innovation 2: Adaptive densification placeholder
-        self.adaptive_densification_strategy = None
-        
-        # Smart densification flags
+        # Smart densification flags (initialized by enable_smart_densification)
         self.use_smart_densification = False
         self.densify_clone_percentile = 75.0
         self.densify_split_percentile = 90.0
@@ -521,46 +519,15 @@ class GaussianModel:
         grads = self.xyz_gradient_accum / self.denom
         grads[grads.isnan()] = 0.0
 
-        # Smart densification: use percentile-based thresholds
-        if hasattr(self, 'use_smart_densification') and self.use_smart_densification:
-            grads_norm = torch.norm(grads, dim=-1)
-            valid_grads = grads_norm[grads_norm > 0]
-            
-            if valid_grads.numel() > 0:
-                clone_threshold = torch.quantile(valid_grads, self.densify_clone_percentile / 100.0).item()
-                split_threshold = torch.quantile(valid_grads, self.densify_split_percentile / 100.0).item()
-                
-                # Use higher threshold for split to be more conservative
-                clone_threshold = max(clone_threshold, max_grad * 0.5)
-                split_threshold = max(split_threshold, max_grad)
-                
-                print(f"[Smart Densification] Clone threshold: {clone_threshold:.6f}, Split threshold: {split_threshold:.6f}")
-                
-                self.densify_and_clone(grads, clone_threshold, extent)
-                self.densify_and_split(grads, split_threshold, extent)
-            else:
-                # Fallback to fixed threshold if no valid gradients
-                self.densify_and_clone(grads, max_grad, extent)
-                self.densify_and_split(grads, max_grad, extent)
-        # Innovation 2: Use adaptive thresholds if available
-        elif hasattr(self, 'adaptive_densification_strategy') and self.adaptive_densification_strategy is not None and self.binding is not None:
-            adaptive_grad_threshold = self.adaptive_densification_strategy.get_adaptive_threshold(
-                self.binding, max_grad
-            )
-            self.densify_and_clone(grads, adaptive_grad_threshold, extent)
-            self.densify_and_split(grads, adaptive_grad_threshold, extent)
-        else:
-            self.densify_and_clone(grads, max_grad, extent)
-            self.densify_and_split(grads, max_grad, extent)
+        if getattr(self, 'use_smart_densification', False):
+            self.densify_and_prune_smart(max_grad, min_opacity, extent, max_screen_size)
+            return
+
+        self.densify_and_clone(grads, max_grad, extent)
+        self.densify_and_split(grads, max_grad, extent)
 
         opacity_values = self.get_opacity.squeeze()
-        if hasattr(self, 'adaptive_densification_strategy') and self.adaptive_densification_strategy is not None and self.binding is not None:
-            adaptive_opacity_threshold = self.adaptive_densification_strategy.get_adaptive_prune_threshold(
-                self.binding, min_opacity
-            )
-            prune_mask = opacity_values < adaptive_opacity_threshold
-        else:
-            prune_mask = opacity_values < min_opacity
+        prune_mask = opacity_values < min_opacity
         if max_screen_size:
             big_points_vs = self.max_radii2D > max_screen_size
             big_points_ws = self.get_scaling.max(dim=1).values > 0.1 * extent
