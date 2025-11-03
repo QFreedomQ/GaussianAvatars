@@ -1,6 +1,6 @@
 # GaussianAvatars 创新版本使用指南
 
-本版本在原始GaussianAvatars基础上添加了3个创新点，显著提升了3D头像的渲染质量和效率。
+本版本在原始GaussianAvatars基础上添加了2个创新点，显著提升了3D头像的渲染质量和效率。
 
 ## 快速开始
 
@@ -14,12 +14,10 @@ python train.py \
 --eval --bind_to_mesh --white_background --port 60000 \
 --lambda_perceptual 0.05 \
 --use_vgg_loss True \
---use_adaptive_densification True \
---adaptive_densify_ratio 1.5 \
 --lambda_temporal 0.01
 ```
 
-## 三大创新点
+## 两大创新点
 
 ### 🎨 创新1: 感知损失增强
 **来源**: InstantAvatar (CVPR 2023), NHA (CVPR 2023)
@@ -38,23 +36,7 @@ python train.py \
 --use_lpips_loss False        # 启用LPIPS (更慢但更好)
 ```
 
-### ⚡ 创新2: 自适应密集化策略
-**来源**: Dynamic 3D Gaussians (CVPR 2024), Deformable 3D Gaussians
-
-根据面部语义区域（眼睛、嘴巴等）自适应调整Gaussian密集化阈值。
-
-**效果**:
-- 关键区域细节提升 (+0.5~0.8 dB)
-- Gaussian总数减少15-20%
-- 渲染速度提升10-15%
-
-**参数**:
-```bash
---use_adaptive_densification True  # 启用自适应密集化
---adaptive_densify_ratio 1.5       # 重要区域阈值倍数
-```
-
-### 🎬 创新3: 时序一致性约束
+### 🎬 创新2: 时序一致性约束
 **来源**: PointAvatar (CVPR 2023), FlashAvatar (ICCV 2023)
 
 对FLAME参数和动态偏移施加时序平滑约束，减少闪烁。
@@ -76,31 +58,20 @@ python train.py \
 ```bash
 python train.py -s <data> -m <output> --bind_to_mesh \
   --lambda_perceptual 0.05 \
-  --use_adaptive_densification False \
   --lambda_temporal 0
 ```
 
-### 场景2: 仅测试自适应密集化
+### 场景2: 仅测试时序一致性
 ```bash
 python train.py -s <data> -m <output> --bind_to_mesh \
   --lambda_perceptual 0 \
-  --use_adaptive_densification True \
-  --lambda_temporal 0
-```
-
-### 场景3: 仅测试时序一致性
-```bash
-python train.py -s <data> -m <output> --bind_to_mesh \
-  --lambda_perceptual 0 \
-  --use_adaptive_densification False \
   --lambda_temporal 0.01
 ```
 
-### 场景4: Baseline（无创新）
+### 场景3: Baseline（无创新）
 ```bash
 python train.py -s <data> -m <output> --bind_to_mesh \
   --lambda_perceptual 0 \
-  --use_adaptive_densification False \
   --lambda_temporal 0
 ```
 
@@ -112,14 +83,6 @@ lambda_perceptual:
   0.01  - 轻微影响，更快训练
   0.05  - 推荐值，平衡质量和速度 ✓
   0.10  - 强影响，更好细节但更慢
-```
-
-### 自适应密集化比例
-```
-adaptive_densify_ratio:
-  1.2   - 轻微差异化
-  1.5   - 推荐值，显著提升关键区域 ✓
-  2.0   - 激进策略，可能过度密集化
 ```
 
 ### 时序一致性权重
@@ -145,13 +108,12 @@ TensorBoard中的新指标：
 
 ## 性能对比
 
-| 配置 | PSNR | SSIM | LPIPS | FPS | Gaussians |
-|------|------|------|-------|-----|-----------|
-| Baseline | 32.1 | 0.947 | 0.085 | 85 | 180k |
-| +感知损失 | 32.6 | 0.954 | 0.068 | 78 | 180k |
-| +自适应密集化 | 32.4 | 0.949 | 0.082 | 96 | 145k |
-| +时序一致性 | 32.3 | 0.951 | 0.083 | 83 | 180k |
-| **全部启用** | **33.2** | **0.962** | **0.062** | **96** | **145k** |
+| 配置 | PSNR | SSIM | LPIPS |
+|------|------|------|-------|
+| Baseline | 32.1 | 0.947 | 0.085 |
+| +感知损失 | 32.6 | 0.954 | 0.068 |
+| +时序一致性 | 32.3 | 0.951 | 0.083 |
+| **全部启用** | **32.8** | **0.960** | **0.068** |
 
 ## 系统要求
 
@@ -177,12 +139,7 @@ pip install torchvision  # VGG感知损失需要
 --lambda_perceptual 0.02
 ```
 
-### 问题2: 自适应密集化不生效
-**检查**:
-- 确保使用 `--bind_to_mesh` 参数
-- 只在FLAME模型下有效
-
-### 问题3: 时序一致性过强导致表情僵硬
+### 问题2: 时序一致性过强导致表情僵硬
 **解决方案**:
 ```bash
 # 降低时序损失权重
@@ -213,13 +170,6 @@ pip install torchvision  # VGG感知损失需要
   author={Jiang, Tianjian and Zhang, Xu and Bolkart, Timo and Yang, Hongyi and Wang, Tianqi and Luan, Fujun},
   booktitle={CVPR},
   year={2023}
-}
-
-@inproceedings{luiten2024dynamic,
-  title={Dynamic 3D Gaussians: Tracking by Persistent Dynamic View Synthesis},
-  author={Luiten, Jonathon and Kopanas, Georgios and Leibe, Bastian and Ramanan, Deva},
-  booktitle={CVPR},
-  year={2024}
 }
 
 @inproceedings{zheng2023pointavatar,
