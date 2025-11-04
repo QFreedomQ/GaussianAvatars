@@ -113,18 +113,10 @@ class OptimizationParams(ParamGroup):
         self.use_vgg_loss = True  # Enable VGG perceptual loss (effective when perceptual weight > 0)
         self.use_lpips_loss = False  # LPIPS is slower, disabled by default
         
-        # Innovation 2: Adaptive Densification Strategy
-        # Source: Dynamic 3D Gaussians (CVPR 2024), MonoGaussianAvatar
-        self.use_adaptive_densification = False  # Enable region-aware densification (default: disabled)
-        self.adaptive_densify_ratio = 1.5  # Threshold multiplier for important regions
-        
         # Innovation 3: Temporal Consistency Regularization
         # Source: PointAvatar (CVPR 2023), FlashAvatar (ICCV 2023)
         self.lambda_temporal = 0.01  # Weight for temporal consistency loss
         self.use_temporal_consistency = False  # Enable temporal smoothness (default: disabled)
-
-        # Mixed precision
-        self.use_amp = False  # Enable automatic mixed precision (default: disabled)
 
         super().__init__(parser, "Optimization Parameters")
 
