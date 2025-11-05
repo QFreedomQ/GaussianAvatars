@@ -11,7 +11,7 @@
 
 import os
 import torch
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 import torch.nn.functional as F
 from random import randint
 from utils.loss_utils import l1_loss, ssim
@@ -33,6 +33,14 @@ from utils.perceptual_loss import CombinedPerceptualLoss
 
 # Innovation 3: Temporal Consistency Regularization
 from utils.temporal_consistency import TemporalConsistencyLoss
+
+# Innovation 4: Adaptive Multi-Resolution Training with Optimized Sparse Evaluation
+from utils.progressive_training import (
+    ResolutionScheduler,
+    ViewClusterSampler,
+    SparseEvaluationScheduler,
+    get_training_camera_with_adaptive_resolution
+)
 
 try:
     from torch.utils.tensorboard import SummaryWriter
@@ -84,6 +92,39 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         print(f"[Innovation 3] Temporal consistency enabled (lambda_temporal={opt.lambda_temporal})")
     elif temporal_flag:
         print("[Innovation 3] WARNING: Temporal consistency requested but no FLAME binding detected; skipping.")
+
+    # Innovation 4: Initialize progressive resolution and sparse evaluation
+    resolution_scheduler = None
+    if getattr(opt, 'progressive_resolution', False):
+        start_ratio = max(0.1, min(1.0, getattr(opt, 'start_resolution_ratio', 0.5)))
+        end_iteration = max(1, getattr(opt, 'progressive_until_iter', 15000))
+        schedule_type = getattr(opt, 'progressive_schedule', 'linear')
+        if start_ratio < 1.0:
+            resolution_scheduler = ResolutionScheduler(
+                start_resolution_ratio=start_ratio,
+                end_resolution_ratio=1.0,
+                start_iteration=0,
+                end_iteration=end_iteration,
+                schedule_type=schedule_type
+            )
+            print(f"[Innovation 4] Progressive resolution training enabled: {start_ratio} -> 1.0 over {end_iteration} iterations (schedule={schedule_type})")
+        else:
+            print("[Innovation 4] Progressive resolution requested but start ratio is 1.0; running at full resolution.")
+    
+    sparse_eval_scheduler = None
+    view_sampler = None
+    if getattr(opt, 'sparse_evaluation', False):
+        sparse_eval_scheduler = SparseEvaluationScheduler(
+            sparse_until_iter=getattr(opt, 'sparse_eval_until_iter', 100000),
+            sparse_view_ratio=getattr(opt, 'sparse_view_ratio', 0.3),
+            sparse_lpips_ratio=getattr(opt, 'sparse_lpips_ratio', 0.5),
+            full_eval_intervals=testing_iterations[-3:] if len(testing_iterations) > 0 else []
+        )
+        view_sampler = ViewClusterSampler(
+            num_clusters=getattr(opt, 'eval_view_clusters', 10),
+            random_seed=42
+        )
+        print(f"[Innovation 4] Sparse evaluation enabled: {opt.sparse_view_ratio*100:.0f}% views, LPIPS on {opt.sparse_lpips_ratio*100:.0f}% until iter {opt.sparse_eval_until_iter}")
 
     bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
@@ -161,17 +202,25 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             iter_camera_train = iter(loader_camera_train)
             viewpoint_cam = next(iter_camera_train)
 
+        # Adaptive resolution camera for this iteration
+        train_cam = viewpoint_cam
+        current_resolution_ratio = 1.0
+        if resolution_scheduler is not None:
+            current_resolution_ratio = resolution_scheduler.get_resolution_ratio(iteration)
+            if current_resolution_ratio < 1.0:
+                train_cam = get_training_camera_with_adaptive_resolution(viewpoint_cam, iteration, resolution_scheduler)
+
         if gaussians.binding != None:
-            gaussians.select_mesh_by_timestep(viewpoint_cam.timestep)
+            gaussians.select_mesh_by_timestep(train_cam.timestep)
 
         # Render and compute loss
         if (iteration - 1) == debug_from:
             pipe.debug = True
-        render_pkg = render(viewpoint_cam, gaussians, pipe, background)
+        render_pkg = render(train_cam, gaussians, pipe, background)
         image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
 
         # Loss
-        gt_image = viewpoint_cam.original_image.cuda()
+        gt_image = train_cam.original_image.cuda()
 
         losses = {}
         losses['l1'] = l1_loss(image, gt_image) * (1.0 - opt.lambda_dssim)
@@ -229,6 +278,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             ema_loss_for_log = 0.4 * losses['total'].item() + 0.6 * ema_loss_for_log
             if iteration % 10 == 0:
                 postfix = {"Loss": f"{ema_loss_for_log:.{7}f}"}
+                if resolution_scheduler is not None and current_resolution_ratio < 1.0:
+                    postfix["res"] = f"{current_resolution_ratio:.2f}"
                 if 'xyz' in losses:
                     postfix["xyz"] = f"{losses['xyz']:.{7}f}"
                 if 'scale' in losses:
@@ -250,7 +301,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 progress_bar.close()
 
             # Log and save
-            training_report(tb_writer, iteration, losses, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background))
+            training_report(tb_writer, iteration, losses, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background), sparse_eval_scheduler, view_sampler)
             if (iteration in saving_iterations):
                 print("[ITER {}] Saving Gaussians".format(iteration))
                 scene.save(iteration)
@@ -299,7 +350,7 @@ def prepare_output_and_logger(args):
         print("Tensorboard not available: not logging progress")
     return tb_writer
 
-def training_report(tb_writer, iteration, losses, elapsed, testing_iterations, scene : Scene, renderFunc, renderArgs):
+def training_report(tb_writer, iteration, losses, elapsed, testing_iterations, scene : Scene, renderFunc, renderArgs, sparse_eval_scheduler=None, view_sampler=None):
     if tb_writer:
         tb_writer.add_scalar('train_loss_patches/l1_loss', losses['l1'].item(), iteration)
         tb_writer.add_scalar('train_loss_patches/ssim_loss', losses['ssim'].item(), iteration)
@@ -331,18 +382,45 @@ def training_report(tb_writer, iteration, losses, elapsed, testing_iterations, s
 
         for config in validation_configs:
             if config['cameras'] and len(config['cameras']) > 0:
+                # Innovation 4: Sparse evaluation - sample subset of views
+                use_sparse = sparse_eval_scheduler is not None and sparse_eval_scheduler.should_use_sparse_evaluation(iteration)
+                
+                camera_dataset = config['cameras']
+                eval_cameras = camera_dataset.cameras
+                total_views = len(eval_cameras)
+                selected_indices = list(range(total_views))
+                sparse_ratio = getattr(sparse_eval_scheduler, 'sparse_view_ratio', 1.0) if use_sparse else 1.0
+                
+                if use_sparse:
+                    if view_sampler is not None:
+                        selected_indices, _ = view_sampler.fit_and_sample(eval_cameras, sample_ratio=sparse_ratio)
+                    else:
+                        num_samples = max(1, int(total_views * sparse_ratio))
+                        step = max(1, total_views // num_samples)
+                        selected_indices = list(range(0, total_views, step))[:num_samples]
+                    selected_indices = sorted(set(selected_indices))
+                    if len(selected_indices) == 0:
+                        selected_indices = [0]
+                    print(f"  [Innovation 4] Using sparse evaluation: {len(selected_indices)}/{total_views} views ({sparse_ratio*100:.0f}%)")
+                
                 l1_test = 0.0
                 psnr_test = 0.0
                 ssim_test = 0.0
                 lpips_test = 0.0
+                lpips_count = 0
                 num_vis_img = 10
                 image_cache = []
                 gt_image_cache = []
                 vis_ct = 0
-                for idx, viewpoint in tqdm(
+                
+                # Create subset dataset for selected indices
+                eval_dataset = Subset(camera_dataset, selected_indices) if use_sparse else camera_dataset
+                num_eval_views = len(selected_indices) if use_sparse else total_views
+                
+                for eval_idx, viewpoint in tqdm(
                     enumerate(
                         DataLoader(
-                            config['cameras'],
+                            eval_dataset,
                             shuffle=False,
                             batch_size=None,
                             num_workers=8,
@@ -350,13 +428,13 @@ def training_report(tb_writer, iteration, losses, elapsed, testing_iterations, s
                             persistent_workers=True,
                         )
                     ),
-                    total=len(config['cameras']),
+                    total=num_eval_views,
                 ):
                     if scene.gaussians.num_timesteps > 1:
                         scene.gaussians.select_mesh_by_timestep(viewpoint.timestep)
                     image = torch.clamp(renderFunc(viewpoint, scene.gaussians, *renderArgs)["render"], 0.0, 1.0)
                     gt_image = torch.clamp(viewpoint.original_image.to("cuda"), 0.0, 1.0)
-                    if tb_writer and (idx % (len(config['cameras']) // num_vis_img) == 0):
+                    if tb_writer and (eval_idx % max(1, num_eval_views // num_vis_img) == 0):
                         tb_writer.add_images(config['name'] + "_{}/render".format(vis_ct), image[None], global_step=iteration)
                         error_image = error_map(image, gt_image)
                         tb_writer.add_images(config['name'] + "_{}/error".format(vis_ct), error_image[None], global_step=iteration)
@@ -367,26 +445,43 @@ def training_report(tb_writer, iteration, losses, elapsed, testing_iterations, s
                     psnr_test += psnr(image, gt_image).mean().double()
                     ssim_test += ssim(image, gt_image).mean().double()
 
-                    image_cache.append(image)
-                    gt_image_cache.append(gt_image)
+                    # Innovation 4: Selectively compute LPIPS (expensive)
+                    compute_lpips = (sparse_eval_scheduler is None or 
+                                   sparse_eval_scheduler.should_compute_lpips(iteration, eval_idx, num_eval_views))
+                    if compute_lpips:
+                        image_cache.append(image)
+                        gt_image_cache.append(gt_image)
 
-                    if idx == len(config['cameras']) - 1 or len(image_cache) == 16:
-                        batch_img = torch.stack(image_cache, dim=0)
-                        batch_gt_img = torch.stack(gt_image_cache, dim=0)
-                        lpips_test += lpips(batch_img, batch_gt_img).sum().double()
-                        image_cache = []
-                        gt_image_cache = []
+                        if eval_idx == num_eval_views - 1 or len(image_cache) == 16:
+                            batch_img = torch.stack(image_cache, dim=0)
+                            batch_gt_img = torch.stack(gt_image_cache, dim=0)
+                            lpips_test += lpips(batch_img, batch_gt_img).sum().double()
+                            lpips_count += len(image_cache)
+                            image_cache = []
+                            gt_image_cache = []
 
-                psnr_test /= len(config['cameras'])
-                l1_test /= len(config['cameras'])          
-                lpips_test /= len(config['cameras'])          
-                ssim_test /= len(config['cameras'])          
-                print("[ITER {}] Evaluating {}: L1 {:.4f} PSNR {:.4f} SSIM {:.4f} LPIPS {:.4f}".format(iteration, config['name'], l1_test, psnr_test, ssim_test, lpips_test))
+                psnr_test /= num_eval_views
+                l1_test /= num_eval_views          
+                if lpips_count > 0:
+                    lpips_test /= lpips_count
+                ssim_test /= num_eval_views          
+                coverage_ratio = num_eval_views / max(1, total_views)
+                lpips_display = lpips_test if lpips_count > 0 else float('nan')
+                print("[ITER {}] Evaluating {}: L1 {:.4f} PSNR {:.4f} SSIM {:.4f} LPIPS {}".format(
+                    iteration,
+                    config['name'],
+                    l1_test,
+                    psnr_test,
+                    ssim_test,
+                    f"{lpips_display:.4f}" if lpips_count > 0 else "N/A"
+                ))
                 if tb_writer:
                     tb_writer.add_scalar(config['name'] + '/loss_viewpoint - l1_loss', l1_test, iteration)
                     tb_writer.add_scalar(config['name'] + '/loss_viewpoint - psnr', psnr_test, iteration)
                     tb_writer.add_scalar(config['name'] + '/loss_viewpoint - ssim', ssim_test, iteration)
-                    tb_writer.add_scalar(config['name'] + '/loss_viewpoint - lpips', lpips_test, iteration)
+                    if lpips_count > 0:
+                        tb_writer.add_scalar(config['name'] + '/loss_viewpoint - lpips', lpips_test, iteration)
+                    tb_writer.add_scalar(config['name'] + '/evaluation_coverage', coverage_ratio, iteration)
 
         if tb_writer:
             tb_writer.add_histogram("scene/opacity_histogram", scene.gaussians.get_opacity, iteration)
