@@ -117,6 +117,18 @@ class OptimizationParams(ParamGroup):
         # Source: PointAvatar (CVPR 2023), FlashAvatar (ICCV 2023)
         self.lambda_temporal = 0.01  # Weight for temporal consistency loss
         self.use_temporal_consistency = False  # Enable temporal smoothness (default: disabled)
+        
+        # Innovation 4: Adaptive Multi-Resolution Training with Optimized Sparse Evaluation
+        # Source: Instant-NGP (SIGGRAPH 2022), 3DGS evaluation strategies
+        self.progressive_resolution = True  # Enable progressive resolution training
+        self.start_resolution_ratio = 0.5  # Start at 50% resolution
+        self.progressive_until_iter = 15000  # Reach full resolution by this iteration
+        self.progressive_schedule = "linear"  # "linear", "exponential", or "cosine"
+        self.sparse_evaluation = True  # Enable sparse evaluation for speed
+        self.sparse_eval_until_iter = 100000  # Use sparse evaluation until this iteration
+        self.sparse_view_ratio = 0.3  # Evaluate 30% of views (clustered sampling)
+        self.sparse_lpips_ratio = 0.5  # Compute LPIPS for 50% of sampled views
+        self.eval_view_clusters = 10  # Number of clusters for view sampling
 
         super().__init__(parser, "Optimization Parameters")
 
