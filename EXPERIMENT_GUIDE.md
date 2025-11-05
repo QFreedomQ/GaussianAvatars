@@ -95,7 +95,7 @@ pip list | grep -E "torch|diff-gaussian|nvdiffrast|roma"
 
 ## 2. 创新点介绍
 
-本项目在原始 GaussianAvatars 基础上实现了三个创新模块，用于提升头部化身的渲染质量和训练效率。
+本项目在原始 GaussianAvatars 基础上实现了两个创新模块，用于提升头部化身的渲染质量和训练效率。
 
 ### 2.1 创新一：感知损失增强 (Perceptual Loss Enhancement)
 
@@ -167,128 +167,7 @@ python train.py \
 
 ---
 
-### 2.2 创新二：自适应密集化策略 (Adaptive Densification Strategy)
-
-#### 原理
-
-原始方法对所有面部区域使用统一的密集化阈值，导致：
-- 重要区域（眼睛、嘴巴）密集化不足，细节缺失
-- 平滑区域（额头、脸颊）过度密集化，浪费资源
-
-自适应策略根据面部区域的语义重要性动态调整密集化阈值。
-
-**核心思想**：
-- 为不同面部区域分配语义权重
-- 重要区域（眼睛、嘴巴、鼻子）使用更激进的密集化策略
-- 平滑区域使用保守策略，减少不必要的高斯点
-
-#### FLAME 面部区域定义
-
-基于 FLAME 模型的顶点索引，定义关键区域：
-
-```python
-# 高重要性区域
-eye_left_region = range(3997, 4067)   # 左眼
-eye_right_region = range(3930, 3997)  # 右眼
-mouth_region = range(2812, 3025)      # 嘴巴
-nose_region = range(3325, 3450)       # 鼻子
-
-# 中等重要性区域
-eyebrow_region = range(3200, 3325)    # 眉毛
-chin_region = range(2700, 2812)       # 下巴
-
-# 低重要性区域
-forehead_region = ...                 # 额头
-cheek_region = ...                    # 脸颊
-```
-
-#### 自适应阈值计算
-
-对于面 $f$，其密集化阈值为：
-
-$$
-\theta_f = \frac{\theta_{base}}{w_f}
-$$
-
-其中 $\theta_{base}$ 是基础阈值，$w_f$ 是面的重要性权重：
-
-$$
-w_f = \begin{cases}
-r & \text{if } f \in \text{high-importance regions} \\
-1.0 & \text{otherwise}
-\end{cases}
-$$
-
-$r$ 是 `adaptive_densify_ratio` (默认 1.5)，意味着重要区域的密集化阈值降低到原来的 66.7%。
-
-#### 实现细节
-
-**文件位置**: `utils/adaptive_densification.py`
-
-```python
-class AdaptiveDensificationStrategy:
-    def __init__(self, num_faces, flame_model, importance_ratio=1.5):
-        self.importance_ratio = importance_ratio
-        
-        # 为每个面计算语义权重
-        self.face_weights = self.compute_face_weights(flame_model)
-        
-    def compute_face_weights(self, flame_model):
-        weights = torch.ones(num_faces)
-        
-        # 标记高重要性面
-        for face_id in high_importance_faces:
-            weights[face_id] = self.importance_ratio
-            
-        return weights
-        
-    def get_adaptive_threshold(self, base_threshold, face_ids):
-        # 返回每个面的自适应阈值
-        return base_threshold / self.face_weights[face_ids]
-```
-
-**集成到训练**: `scene/flame_gaussian_model.py`
-
-```python
-def densify_and_prune(self, grad_threshold, ...):
-    if self.use_adaptive_densification:
-        # 使用自适应阈值
-        adaptive_thresholds = self.adaptive_densification_strategy.get_adaptive_threshold(
-            grad_threshold, self.binding
-        )
-        grads = self.xyz_gradient_accum / self.denom
-        mask = grads >= adaptive_thresholds
-    else:
-        # 使用固定阈值
-        grads = self.xyz_gradient_accum / self.denom
-        mask = grads >= grad_threshold
-```
-
-#### 优点
-
-1. **质量提升**: 眼睛、嘴巴等关键区域细节更丰富
-2. **效率提升**: 总高斯点数减少 15-20%，但质量不降反升
-3. **内存优化**: 减少不必要的高斯点，降低显存占用
-4. **渲染加速**: 更少的高斯点意味着更快的渲染速度
-
-#### 启用方法
-
-```bash
-python train.py \
-  -s data/... \
-  -m output/... \
-  --use_adaptive_densification \
-  --adaptive_densify_ratio 1.5 \
-  --eval --bind_to_mesh --white_background
-```
-
-**关键参数**：
-- `--use_adaptive_densification`: 启用自适应密集化
-- `--adaptive_densify_ratio`: 重要区域阈值倍率 (推荐: 1.3-2.0)
-
----
-
-### 2.3 创新三：时序一致性正则化 (Temporal Consistency Regularization)
+### 2.2 创新二：时序一致性正则化 (Temporal Consistency Regularization)
 
 #### 原理
 
@@ -466,7 +345,7 @@ echo "Test images: $(ls ${DATA_DIR}/test/images/*.png | wc -l)"
 
 ### 4.1 实验目标
 
-通过对比实验和消融实验，验证三个创新模块的有效性：
+通过对比实验和消融实验，验证两个创新模块的有效性：
 
 1. **基线对比**: 原始方法 vs. 全部创新
 2. **消融实验**: 分析每个创新的独立贡献
@@ -474,16 +353,12 @@ echo "Test images: $(ls ${DATA_DIR}/test/images/*.png | wc -l)"
 
 ### 4.2 实验配置
 
-| 实验编号 | 实验名称 | 感知损失 | 自适应密集化 | 时序一致性 | 目的 |
-|---------|---------|---------|-------------|-----------|------|
-| Exp-1 | Baseline | ❌ | ❌ | ❌ | 基线 |
-| Exp-2 | Perceptual | ✅ | ❌ | ❌ | 消融：感知损失 |
-| Exp-3 | Adaptive | ❌ | ✅ | ❌ | 消融：自适应密集化 |
-| Exp-4 | Temporal | ❌ | ❌ | ✅ | 消融：时序一致性 |
-| Exp-5 | Perc+Adapt | ✅ | ✅ | ❌ | 组合1 |
-| Exp-6 | Perc+Temp | ✅ | ❌ | ✅ | 组合2 |
-| Exp-7 | Adapt+Temp | ❌ | ✅ | ✅ | 组合3 |
-| Exp-8 | Full | ✅ | ✅ | ✅ | 全部创新 |
+| 实验编号 | 实验名称 | 感知损失 | 时序一致性 | 目的 |
+|---------|---------|---------|-----------|------|
+| Exp-1 | Baseline | ❌ | ❌ | 基线 |
+| Exp-2 | Perceptual | ✅ | ❌ | 消融：感知损失 |
+| Exp-3 | Temporal | ❌ | ✅ | 消融：时序一致性 |
+| Exp-4 | Combined | ✅ | ✅ | 全部创新 |
 
 ### 4.3 评估指标
 
@@ -583,44 +458,15 @@ Loss: 0.0234  xyz: 0.0012  scale: 0.0023  percep: 0.0456
 - LPIPS 降低 10-15%
 - 面部细节更清晰
 
-### 5.4 实验三：自适应密集化消融
 
-**目的**: 验证自适应密集化的独立效果
-
-```bash
-python train.py \
-  -s ${DATA_DIR} \
-  -m ${OUTPUT_DIR}/exp3_adaptive_${SUBJECT} \
-  --eval \
-  --bind_to_mesh \
-  --white_background \
-  --port ${PORT} \
-  --lambda_perceptual 0 \
-  --use_adaptive_densification \
-  --adaptive_densify_ratio 1.5 \
-  --interval 60000
-```
-
-**验证日志**:
-```
-[Innovation 2] Enabled adaptive densification with ratio 1.5
-[Adaptive Densification] Computed semantic weights for 9976 faces
-[Adaptive Densification] High-importance faces: 1523
-```
-
-**预期效果**:
-- 高斯点数减少 15-20%
-- 眼睛、嘴巴区域 PSNR 提升
-- 整体质量保持或轻微提升
-
-### 5.5 实验四：时序一致性消融
+### 5.4 实验三：时序一致性消融
 
 **目的**: 验证时序一致性的独立效果
 
 ```bash
 python train.py \
   -s ${DATA_DIR} \
-  -m ${OUTPUT_DIR}/exp4_temporal_${SUBJECT} \
+  -m ${OUTPUT_DIR}/exp3_temporal_${SUBJECT} \
   --eval \
   --bind_to_mesh \
   --white_background \
@@ -633,7 +479,7 @@ python train.py \
 
 **验证日志**:
 ```
-[Innovation 3] Temporal consistency enabled (lambda_temporal=0.01)
+[Innovation 2] Temporal consistency enabled (lambda_temporal=0.01)
 Training progress: 1%|█ | 6500/600000 [02:15<3:45:23, 43.84it/s]
 Loss: 0.0234  xyz: 0.0012  scale: 0.0023  temp: 0.0089
 ```
@@ -643,76 +489,20 @@ Loss: 0.0234  xyz: 0.0012  scale: 0.0023  temp: 0.0089
 - 相邻帧 FLAME 参数差异减小
 - 动态区域闪烁减少
 
-### 5.6 实验五至七：组合实验
+### 5.5 实验四：组合实验（感知损失 + 时序一致性）
 
-#### 实验五：感知损失 + 自适应密集化
+**目的**: 验证两个创新模块的协同效果
 
 ```bash
 python train.py \
   -s ${DATA_DIR} \
-  -m ${OUTPUT_DIR}/exp5_perc_adapt_${SUBJECT} \
+  -m ${OUTPUT_DIR}/exp4_combined_${SUBJECT} \
   --eval \
   --bind_to_mesh \
   --white_background \
   --port ${PORT} \
   --lambda_perceptual 0.05 \
   --use_vgg_loss \
-  --use_adaptive_densification \
-  --adaptive_densify_ratio 1.5 \
-  --interval 60000
-```
-
-#### 实验六：感知损失 + 时序一致性
-
-```bash
-python train.py \
-  -s ${DATA_DIR} \
-  -m ${OUTPUT_DIR}/exp6_perc_temp_${SUBJECT} \
-  --eval \
-  --bind_to_mesh \
-  --white_background \
-  --port ${PORT} \
-  --lambda_perceptual 0.05 \
-  --use_vgg_loss \
-  --use_temporal_consistency \
-  --lambda_temporal 0.01 \
-  --interval 60000
-```
-
-#### 实验七：自适应密集化 + 时序一致性
-
-```bash
-python train.py \
-  -s ${DATA_DIR} \
-  -m ${OUTPUT_DIR}/exp7_adapt_temp_${SUBJECT} \
-  --eval \
-  --bind_to_mesh \
-  --white_background \
-  --port ${PORT} \
-  --lambda_perceptual 0 \
-  --use_adaptive_densification \
-  --adaptive_densify_ratio 1.5 \
-  --use_temporal_consistency \
-  --lambda_temporal 0.01 \
-  --interval 60000
-```
-
-### 5.7 实验八：全部创新 (Full)
-
-**目的**: 验证所有创新的协同效果
-
-```bash
-python train.py \
-  -s ${DATA_DIR} \
-  -m ${OUTPUT_DIR}/exp8_full_${SUBJECT} \
-  --eval \
-  --bind_to_mesh \
-  --white_background \
-  --port ${PORT} \
-  --lambda_perceptual 0.05 \
-  --use_vgg_loss \
-  --use_adaptive_densification \
-  --adaptive_densify_ratio 1.5 \
   --use_temporal_consistency \
   --lambda_temporal 0.01 \
   --interval 60000
@@ -721,22 +511,19 @@ python train.py \
 **验证日志**:
 ```
 [Innovation 1] Perceptual loss enabled (lambda_perceptual=0.05, use_vgg=True, use_lpips=False)
-[Innovation 2] Enabled adaptive densification with ratio 1.5
-[Adaptive Densification] Computed semantic weights for 9976 faces
-[Adaptive Densification] High-importance faces: 1523
-[Innovation 3] Temporal consistency enabled (lambda_temporal=0.01)
+[Innovation 2] Temporal consistency enabled (lambda_temporal=0.01)
 
 Training progress: 1%|█ | 6500/600000 [02:15<3:45:23, 43.84it/s]
 Loss: 0.0234  xyz: 0.0012  scale: 0.0023  percep: 0.0456  temp: 0.0089
 ```
 
-**预期最佳效果**:
+**预期效果**:
 - PSNR 提升 1.0-1.5 dB
 - SSIM 提升 1.5-2.5%
 - LPIPS 降低 18-25%
-- 高斯点数减少 15-20%
+- 视频序列更平滑，细节更丰富
 
-### 5.8 批量训练脚本
+### 5.6 批量训练脚本
 
 创建脚本 `run_all_experiments.sh`:
 
@@ -758,36 +545,20 @@ echo "Subject: ${SUBJECT}"
 echo "=================================="
 
 # Exp-1: Baseline
-echo "[1/8] 训练 Baseline..."
+echo "[1/4] 训练 Baseline..."
 python train.py -s ${DATA_DIR} -m ${OUTPUT_DIR}/exp1_baseline_${SUBJECT} ${COMMON} --lambda_perceptual 0
 
 # Exp-2: Perceptual
-echo "[2/8] 训练 Perceptual Only..."
+echo "[2/4] 训练 Perceptual Only..."
 python train.py -s ${DATA_DIR} -m ${OUTPUT_DIR}/exp2_perceptual_${SUBJECT} ${COMMON} --lambda_perceptual 0.05 --use_vgg_loss
 
-# Exp-3: Adaptive
-echo "[3/8] 训练 Adaptive Densification Only..."
-python train.py -s ${DATA_DIR} -m ${OUTPUT_DIR}/exp3_adaptive_${SUBJECT} ${COMMON} --lambda_perceptual 0 --use_adaptive_densification --adaptive_densify_ratio 1.5
+# Exp-3: Temporal
+echo "[3/4] 训练 Temporal Consistency Only..."
+python train.py -s ${DATA_DIR} -m ${OUTPUT_DIR}/exp3_temporal_${SUBJECT} ${COMMON} --lambda_perceptual 0 --use_temporal_consistency --lambda_temporal 0.01
 
-# Exp-4: Temporal
-echo "[4/8] 训练 Temporal Consistency Only..."
-python train.py -s ${DATA_DIR} -m ${OUTPUT_DIR}/exp4_temporal_${SUBJECT} ${COMMON} --lambda_perceptual 0 --use_temporal_consistency --lambda_temporal 0.01
-
-# Exp-5: Perceptual + Adaptive
-echo "[5/8] 训练 Perceptual + Adaptive..."
-python train.py -s ${DATA_DIR} -m ${OUTPUT_DIR}/exp5_perc_adapt_${SUBJECT} ${COMMON} --lambda_perceptual 0.05 --use_vgg_loss --use_adaptive_densification --adaptive_densify_ratio 1.5
-
-# Exp-6: Perceptual + Temporal
-echo "[6/8] 训练 Perceptual + Temporal..."
-python train.py -s ${DATA_DIR} -m ${OUTPUT_DIR}/exp6_perc_temp_${SUBJECT} ${COMMON} --lambda_perceptual 0.05 --use_vgg_loss --use_temporal_consistency --lambda_temporal 0.01
-
-# Exp-7: Adaptive + Temporal
-echo "[7/8] 训练 Adaptive + Temporal..."
-python train.py -s ${DATA_DIR} -m ${OUTPUT_DIR}/exp7_adapt_temp_${SUBJECT} ${COMMON} --lambda_perceptual 0 --use_adaptive_densification --adaptive_densify_ratio 1.5 --use_temporal_consistency --lambda_temporal 0.01
-
-# Exp-8: Full
-echo "[8/8] 训练 Full Innovations..."
-python train.py -s ${DATA_DIR} -m ${OUTPUT_DIR}/exp8_full_${SUBJECT} ${COMMON} --lambda_perceptual 0.05 --use_vgg_loss --use_adaptive_densification --adaptive_densify_ratio 1.5 --use_temporal_consistency --lambda_temporal 0.01
+# Exp-4: Combined
+echo "[4/4] 训练 Perceptual + Temporal..."
+python train.py -s ${DATA_DIR} -m ${OUTPUT_DIR}/exp4_combined_${SUBJECT} ${COMMON} --lambda_perceptual 0.05 --use_vgg_loss --use_temporal_consistency --lambda_temporal 0.01
 
 echo "=================================="
 echo "所有实验训练完成！"
@@ -833,7 +604,7 @@ python render.py \
   --skip_train --skip_test
 
 # 批量渲染所有实验的验证集
-for exp in exp1_baseline exp2_perceptual exp3_adaptive exp4_temporal exp5_perc_adapt exp6_perc_temp exp7_adapt_temp exp8_full; do
+for exp in exp1_baseline exp2_perceptual exp3_temporal exp4_combined; do
   echo "Rendering Novel-View for ${exp}..."
   python render.py \
     -m ${OUTPUT_DIR}/${exp}_${SUBJECT} \
@@ -944,12 +715,8 @@ EOF
 python evaluate_novel_view.py -m \
   ${OUTPUT_DIR}/exp1_baseline_${SUBJECT} \
   ${OUTPUT_DIR}/exp2_perceptual_${SUBJECT} \
-  ${OUTPUT_DIR}/exp3_adaptive_${SUBJECT} \
-  ${OUTPUT_DIR}/exp4_temporal_${SUBJECT} \
-  ${OUTPUT_DIR}/exp5_perc_adapt_${SUBJECT} \
-  ${OUTPUT_DIR}/exp6_perc_temp_${SUBJECT} \
-  ${OUTPUT_DIR}/exp7_adapt_temp_${SUBJECT} \
-  ${OUTPUT_DIR}/exp8_full_${SUBJECT}
+  ${OUTPUT_DIR}/exp3_temporal_${SUBJECT} \
+  ${OUTPUT_DIR}/exp4_combined_${SUBJECT}
 ```
 
 #### 6.1.4 预期结果
@@ -958,9 +725,8 @@ python evaluate_novel_view.py -m \
 |-----|---------|----------|-----------|------|
 | Baseline | 32.5 | 0.945 | 0.082 | 基线 |
 | Perceptual | 33.2 (+0.7) | 0.955 (+1.1%) | 0.070 (-14.6%) | 感知损失改善细节 |
-| Adaptive | 32.8 (+0.3) | 0.948 (+0.3%) | 0.078 (-4.9%) | 效率提升 |
-| Temporal | 32.6 (+0.1) | 0.947 (+0.2%) | 0.080 (-2.4%) | 对单帧影响小 |
-| **Full** | **33.8 (+1.3)** | **0.962 (+1.8%)** | **0.065 (-20.7%)** | **最佳** |
+| Temporal | 32.6 (+0.1) | 0.947 (+0.2%) | 0.080 (-2.4%) | 时序平滑提升 |
+| Combined | 33.6 (+1.1) | 0.960 (+1.5%) | 0.066 (-19.5%) | 细节与时序兼顾 |
 
 ---
 
@@ -1590,17 +1356,13 @@ python summarize_results.py
 |-----|---------|----------|-----------|-----------|------|
 | Baseline | 32.5 | 0.945 | 0.082 | 180k | 基线 |
 | Perceptual | 33.2 (+0.7) | 0.955 (+1.1%) | 0.070 (-14.6%) | 180k | 细节改善 |
-| Adaptive | 32.8 (+0.3) | 0.948 (+0.3%) | 0.078 (-4.9%) | 155k (-13.9%) | 效率提升 |
 | Temporal | 32.6 (+0.1) | 0.947 (+0.2%) | 0.080 (-2.4%) | 180k | 平滑度改善 |
-| Perc+Adapt | 33.5 (+1.0) | 0.959 (+1.5%) | 0.067 (-18.3%) | 155k (-13.9%) | 质量+效率 |
-| Perc+Temp | 33.3 (+0.8) | 0.957 (+1.3%) | 0.068 (-17.1%) | 180k | 质量+平滑 |
-| Adapt+Temp | 32.9 (+0.4) | 0.949 (+0.4%) | 0.076 (-7.3%) | 155k (-13.9%) | 效率+平滑 |
-| **Full** | **33.8 (+1.3)** | **0.962 (+1.8%)** | **0.065 (-20.7%)** | **150k (-16.7%)** | **最佳** |
+| Combined | 33.6 (+1.1) | 0.960 (+1.5%) | 0.066 (-19.5%) | 180k | 质量与时序兼顾 |
 
 **关键观察**：
 1. 感知损失对 LPIPS 改善最显著（-14.6%）
-2. 自适应密集化显著减少高斯点数（-13.9%）且质量不降
-3. 全部创新协同效应明显，PSNR +1.3dB，LPIPS -20.7%
+2. 时序一致性大幅提升视频平滑度与稳定性
+3. 两个创新叠加时协同效应最强，兼顾细节与时序稳定
 
 ---
 
@@ -1837,10 +1599,6 @@ done
 - **Neural Head Avatars** (CVPR 2023): [https://github.com/philgras/neural-head-avatars](https://github.com/philgras/neural-head-avatars)
 - **Perceptual Losses** (ECCV 2016): Johnson et al. "Perceptual Losses for Real-Time Style Transfer and Super-Resolution"
 
-#### 自适应密集化
-
-- **Dynamic 3D Gaussians** (CVPR 2024): [https://github.com/JonathonLuiten/Dynamic3DGaussians](https://github.com/JonathonLuiten/Dynamic3DGaussians)
-- **Deformable 3D Gaussians** (arXiv 2023): [https://github.com/ingra14m/Deformable-3D-Gaussians](https://github.com/ingra14m/Deformable-3D-Gaussians)
 
 #### 时序一致性
 
@@ -1885,8 +1643,6 @@ done
 # 创新模块
 --use_vgg_loss                  # 启用 VGG 感知损失
 --use_lpips_loss                # 启用 LPIPS 感知损失
---use_adaptive_densification    # 启用自适应密集化
---adaptive_densify_ratio 1.5    # 自适应密集化比率
 --use_temporal_consistency      # 启用时序一致性
 
 # 其他
@@ -1907,8 +1663,7 @@ GaussianAvatars/
 │   └── 306/
 ├── doc/                    # 文档
 │   ├── installation.md
-│   ├── download.md
-│   └── experiment_steps.md
+│   └── download.md
 ├── flame_model/            # FLAME 模型
 ├── gaussian_renderer/      # 高斯渲染器
 ├── mesh_renderer/          # 网格渲染器
