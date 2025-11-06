@@ -117,6 +117,11 @@ class OptimizationParams(ParamGroup):
         # Source: PointAvatar (CVPR 2023), FlashAvatar (ICCV 2023)
         self.lambda_temporal = 0.01  # Weight for temporal consistency loss
         self.use_temporal_consistency = False  # Enable temporal smoothness (default: disabled)
+        
+        # Innovation 3: Adaptive Regional Density Control
+        # Novel contribution addressing uniform density limitation in GaussianAvatars
+        self.use_adaptive_density = True  # Enable region-aware densification (recommended: True)
+        self.adaptive_density_log_interval = 10000  # Iterations between logging density statistics
 
         super().__init__(parser, "Optimization Parameters")
 
