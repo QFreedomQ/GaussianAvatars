@@ -31,7 +31,7 @@ from arguments import ModelParams, PipelineParams, OptimizationParams
 # Innovation 1: Perceptual Loss Enhancement
 from utils.perceptual_loss import CombinedPerceptualLoss
 
-# Innovation 3: Temporal Consistency Regularization
+# Innovation 2: Temporal Consistency Regularization
 from utils.temporal_consistency import TemporalConsistencyLoss
 
 try:
@@ -76,14 +76,14 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     elif getattr(opt, 'lambda_perceptual', 0) > 0:
         print("[Innovation 1] WARNING: lambda_perceptual > 0 but perceptual loss module could not be initialized.")
 
-    # Innovation 3: Initialize temporal consistency loss
+    # Innovation 2: Initialize temporal consistency loss
     temporal_loss_fn = None
     temporal_flag = getattr(opt, 'use_temporal_consistency', False) and getattr(opt, 'lambda_temporal', 0) > 0
     if isinstance(gaussians, FlameGaussianModel) and temporal_flag:
         temporal_loss_fn = TemporalConsistencyLoss().to('cuda')
-        print(f"[Innovation 3] Temporal consistency enabled (lambda_temporal={opt.lambda_temporal})")
+        print(f"[Innovation 2] Temporal consistency enabled (lambda_temporal={opt.lambda_temporal})")
     elif temporal_flag:
-        print("[Innovation 3] WARNING: Temporal consistency requested but no FLAME binding detected; skipping.")
+        print("[Innovation 2] WARNING: Temporal consistency requested but no FLAME binding detected; skipping.")
 
     bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
@@ -181,7 +181,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         if perceptual_loss_fn is not None and hasattr(opt, 'lambda_perceptual') and opt.lambda_perceptual > 0:
             losses['perceptual'] = perceptual_loss_fn(image, gt_image) * opt.lambda_perceptual
 
-        # Innovation 3: Add temporal consistency loss
+        # Innovation 2: Add temporal consistency loss
         if temporal_loss_fn is not None and gaussians.binding is not None and hasattr(opt, 'lambda_temporal') and opt.lambda_temporal > 0:
             temporal_loss = temporal_loss_fn(
                 gaussians.flame_param,
@@ -239,7 +239,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                     postfix["lap"] = f"{losses['lap']:.{7}f}"
                 if 'dynamic_offset_std' in losses:
                     postfix["dynamic_offset_std"] = f"{losses['dynamic_offset_std']:.{7}f}"
-                # Innovation 1 & 3: Add new loss terms to progress bar
+                # Innovation 1 & 2: Add new loss terms to progress bar
                 if 'perceptual' in losses:
                     postfix["percep"] = f"{losses['perceptual']:.{7}f}"
                 if 'temporal' in losses:

@@ -258,7 +258,7 @@ python train.py --lambda_perceptual 0.05 --lambda_temporal 0.01
 
 ## 更新日志
 
-- **2024-01**: 实现三个创新点
+- **2024-01**: 实现两个创新点
 - 完成代码集成和测试
 - 编写详细文档
 
