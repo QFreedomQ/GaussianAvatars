@@ -34,6 +34,9 @@ from utils.perceptual_loss import CombinedPerceptualLoss
 # Innovation 2: Temporal Consistency Regularization
 from utils.temporal_consistency import TemporalConsistencyLoss
 
+# Innovation 3: Adaptive Regional Density Control
+from utils.adaptive_density import AdaptiveDensificationWrapper
+
 try:
     from torch.utils.tensorboard import SummaryWriter
     TENSORBOARD_FOUND = True
@@ -84,6 +87,14 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         print(f"[Innovation 2] Temporal consistency enabled (lambda_temporal={opt.lambda_temporal})")
     elif temporal_flag:
         print("[Innovation 2] WARNING: Temporal consistency requested but no FLAME binding detected; skipping.")
+
+    # Innovation 3: Initialize adaptive density control
+    adaptive_density_wrapper = None
+    if getattr(opt, 'use_adaptive_density', True) and isinstance(gaussians, FlameGaussianModel):
+        adaptive_density_wrapper = AdaptiveDensificationWrapper(gaussians, enable=True)
+        print(f"[Innovation 3] Adaptive density enabled (log_interval={opt.adaptive_density_log_interval})")
+    elif getattr(opt, 'use_adaptive_density', True):
+        print("[Innovation 3] WARNING: Adaptive density requested but no FLAME binding detected; using standard densification.")
 
     bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
@@ -263,7 +274,27 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
                 if iteration > opt.densify_from_iter and iteration % opt.densification_interval == 0:
                     size_threshold = 20 if iteration > opt.opacity_reset_interval else None
-                    gaussians.densify_and_prune(opt.densify_grad_threshold, 0.005, scene.cameras_extent, size_threshold)
+                    if adaptive_density_wrapper is not None:
+                        adaptive_density_wrapper.densify_and_prune_adaptive(
+                            opt.densify_grad_threshold,
+                            0.005,
+                            scene.cameras_extent,
+                            size_threshold
+                        )
+
+                        if getattr(opt, 'adaptive_density_log_interval', 0) > 0 and iteration % opt.adaptive_density_log_interval == 0:
+                            stats = adaptive_density_wrapper.get_statistics()
+                            if stats is not None:
+                                top_regions = sorted(stats.items(), key=lambda item: item[1]['importance'], reverse=True)
+                                summary = ", ".join([
+                                    f"{name}: {data['percentage']:.1f}%" for name, data in top_regions[:4]
+                                ])
+                                print(f"[Innovation 3] Iter {iteration}: region coverage -> {summary}")
+                                if tb_writer:
+                                    for name, data in stats.items():
+                                        tb_writer.add_scalar(f"adaptive_density/{name}", data['percentage'], iteration)
+                    else:
+                        gaussians.densify_and_prune(opt.densify_grad_threshold, 0.005, scene.cameras_extent, size_threshold)
                 
                 if iteration % opt.opacity_reset_interval == 0 or (dataset.white_background and iteration == opt.densify_from_iter):
                     gaussians.reset_opacity()
