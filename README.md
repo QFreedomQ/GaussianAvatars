@@ -26,8 +26,6 @@ The mesh rendering operations are adapted from [NVDiffRec](https://github.com/NV
 
 ### [2. Download](doc/download.md)
 
-### [3. Experiment Workflow & Metrics (ZH)](doc/experiment_steps.md)
-
 ## Usage
 
 ### 0. Demo
@@ -145,7 +143,7 @@ python local_viewer.py \
 ### [3. Offline Rendering & Evaluation](doc/offline_render.md)
 
 > [!TIP]
-> 📖 **Experiment Workflow Guide**: Refer to the [Chinese guide](doc/experiment_steps.md) or the [English summary](doc/experiment_steps_en.md) for end-to-end steps covering setup, training, rendering, and metric evaluation.
+> 📖 **Experiment Workflow Guide**: Refer to the [EXPERIMENT_GUIDE.md](./EXPERIMENT_GUIDE.md) for end-to-end steps covering setup, training, rendering, and metric evaluation.
 
 ## Cite
 

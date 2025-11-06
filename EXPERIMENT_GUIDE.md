@@ -758,7 +758,7 @@ python render.py \
   --select_camera_id 8  # 正面视角
 
 # 批量渲染所有实验的测试集
-for exp in exp1_baseline exp2_perceptual exp3_adaptive exp4_temporal exp5_perc_adapt exp6_perc_temp exp7_adapt_temp exp8_full; do
+for exp in exp1_baseline exp2_perceptual exp3_temporal exp4_combined; do
   echo "Rendering Self-Reenactment for ${exp}..."
   python render.py \
     -m ${OUTPUT_DIR}/${exp}_${SUBJECT} \
@@ -779,7 +779,7 @@ python metrics.py \
   -m ${OUTPUT_DIR}/exp1_baseline_${SUBJECT}
 
 # 批量评估所有实验
-for exp in exp1_baseline exp2_perceptual exp3_adaptive exp4_temporal exp5_perc_adapt exp6_perc_temp exp7_adapt_temp exp8_full; do
+for exp in exp1_baseline exp2_perceptual exp3_temporal exp4_combined; do
   echo "Evaluating Self-Reenactment for ${exp}..."
   python metrics.py -m ${OUTPUT_DIR}/${exp}_${SUBJECT}
 done
@@ -855,8 +855,9 @@ EOF
 # 运行时序一致性评估
 python evaluate_temporal_consistency.py -m \
   ${OUTPUT_DIR}/exp1_baseline_${SUBJECT} \
-  ${OUTPUT_DIR}/exp4_temporal_${SUBJECT} \
-  ${OUTPUT_DIR}/exp8_full_${SUBJECT}
+  ${OUTPUT_DIR}/exp2_perceptual_${SUBJECT} \
+  ${OUTPUT_DIR}/exp3_temporal_${SUBJECT} \
+  ${OUTPUT_DIR}/exp4_combined_${SUBJECT}
 ```
 
 #### 6.2.5 预期结果
@@ -866,12 +867,12 @@ python evaluate_temporal_consistency.py -m \
 | Baseline | 31.8 | 0.938 | 0.095 | 0.0042 | 基线 |
 | Perceptual | 32.5 (+0.7) | 0.948 (+1.1%) | 0.078 (-17.9%) | 0.0041 | 细节改善 |
 | Temporal | 31.9 (+0.1) | 0.940 (+0.2%) | 0.092 (-3.2%) | **0.0028** | **时序平滑** |
-| **Full** | **33.1 (+1.3)** | **0.955 (+1.8%)** | **0.072 (-24.2%)** | **0.0030** | **综合最佳** |
+| **Combined** | **33.1 (+1.3)** | **0.955 (+1.8%)** | **0.072 (-24.2%)** | **0.0030** | **综合最佳** |
 
 **关键观察**:
 - 时序一致性模块显著降低帧间差异（-33%）
 - 感知损失对动态区域（嘴巴、眼睛）质量提升明显
-- 全部创新协同后达到最佳效果
+- 两个创新协同后达到最佳效果
 
 ---
 
@@ -894,21 +895,21 @@ TGT_SUBJECT=218  # 目标人物ID
 
 # 单个实验的跨身份重演（使用目标人物的10个预设动作序列）
 python render.py \
-  -m ${OUTPUT_DIR}/exp8_full_${SUBJECT} \
+  -m ${OUTPUT_DIR}/exp4_combined_${SUBJECT} \
   -t data/UNION10_${TGT_SUBJECT}_EMO1234EXP234589_v16_DS2-0.5x_lmkSTAR_teethV3_SMOOTH_offsetS_whiteBg_maskBelowLine \
   --select_camera_id 8 \
   --iteration ${ITER}
 
 # 单个实验的跨身份重演（使用目标人物的自由动作序列）
 python render.py \
-  -m ${OUTPUT_DIR}/exp8_full_${SUBJECT} \
+  -m ${OUTPUT_DIR}/exp4_combined_${SUBJECT} \
   -t data/${TGT_SUBJECT}_FREE_v16_DS2-0.5x_lmkSTAR_teethV3_SMOOTH_offsetS_whiteBg_maskBelowLine \
   --select_camera_id 8 \
   --iteration ${ITER}
 
 # 批量渲染多个目标身份
 TARGET_SUBJECTS=(218 251 330)  # 多个目标人物
-for exp in exp1_baseline exp8_full; do
+for exp in exp1_baseline exp4_combined; do
   for tgt in "${TARGET_SUBJECTS[@]}"; do
     echo "Rendering Cross-Identity: ${exp} -> Subject ${tgt}..."
     python render.py \
@@ -934,7 +935,7 @@ mkdir -p cross_identity_comparison
 # 对比源身份和跨身份重演结果
 for tgt in 218 251 330; do
   ffmpeg -framerate 25 \
-    -i ${OUTPUT_DIR}/exp8_full_${SUBJECT}/UNION10_${tgt}_*/ours_${ITER}/renders/%05d.png \
+    -i ${OUTPUT_DIR}/exp4_combined_${SUBJECT}/UNION10_${tgt}_*/ours_${ITER}/renders/%05d.png \
     -c:v libx264 -pix_fmt yuv420p \
     cross_identity_comparison/subject_${SUBJECT}_to_${tgt}.mp4
 done
@@ -1055,7 +1056,7 @@ EOF
 # 运行身份保持评估（需要安装 face_recognition）
 # pip install face_recognition
 python evaluate_identity_preservation.py \
-  --source_model ${OUTPUT_DIR}/exp8_full_${SUBJECT} \
+  --source_model ${OUTPUT_DIR}/exp4_combined_${SUBJECT} \
   --target_subjects 218 251 330
 ```
 
@@ -1077,12 +1078,12 @@ python evaluate_identity_preservation.py \
 | Baseline | 0.82 | 0.0055 | 3.2/5.0 | 身份保持较弱 |
 | Perceptual | 0.85 | 0.0053 | 3.8/5.0 | 细节更清晰 |
 | Temporal | 0.83 | **0.0038** | 3.5/5.0 | **动画更流畅** |
-| **Full** | **0.88** | **0.0040** | **4.3/5.0** | **综合最佳** |
+| **Combined** | **0.88** | **0.0040** | **4.3/5.0** | **综合最佳** |
 
 **关键观察**:
 - 感知损失提升面部细节，增强身份识别度
 - 时序一致性确保跨身份动画的流畅性
-- 全部创新显著提升跨身份重演的质量和自然度
+- 两个创新协同显著提升跨身份重演的质量和自然度
 
 ---
 
@@ -1145,8 +1146,7 @@ def count_gaussians(ply_path):
 
 # 评估所有实验
 experiments = [
-    'exp1_baseline', 'exp2_perceptual', 'exp3_adaptive', 'exp4_temporal',
-    'exp5_perc_adapt', 'exp6_perc_temp', 'exp7_adapt_temp', 'exp8_full'
+    'exp1_baseline', 'exp2_perceptual', 'exp3_temporal', 'exp4_combined'
 ]
 
 subject = 306
@@ -1236,7 +1236,7 @@ python fps_benchmark_dataset.py \
   --skip_train
 
 # 批量测试
-for exp in exp1_baseline exp2_perceptual exp3_adaptive exp4_temporal exp5_perc_adapt exp6_perc_temp exp7_adapt_temp exp8_full; do
+for exp in exp1_baseline exp2_perceptual exp3_temporal exp4_combined; do
   echo "Benchmarking ${exp}..."
   python fps_benchmark_dataset.py \
     -m ${OUTPUT_DIR}/${exp}_${SUBJECT} \
@@ -1413,14 +1413,12 @@ conda install gcc_linux-64=11.2
 ```bash
 # 检查参数
 --lambda_perceptual 0.05    # 必须 > 0
---use_adaptive_densification  # 必须显式指定
---use_temporal_consistency    # 必须显式指定
+--use_temporal_consistency  # 必须显式指定
 
 # 验证日志
 # 应该看到类似输出：
 # [Innovation 1] Perceptual loss enabled ...
-# [Innovation 2] Enabled adaptive densification ...
-# [Innovation 3] Temporal consistency enabled ...
+# [Innovation 2] Temporal consistency enabled ...
 ```
 
 #### Q4: GPU 利用率低 (< 60%)
@@ -1536,7 +1534,7 @@ chmod +x run_all_experiments.sh
 
 ```bash
 # 1. 离线渲染
-for exp in exp1_baseline exp2_perceptual exp3_adaptive exp4_temporal exp5_perc_adapt exp6_perc_temp exp7_adapt_temp exp8_full; do
+for exp in exp1_baseline exp2_perceptual exp3_temporal exp4_combined; do
   python render.py -m output/${exp}_${SUBJECT} --iteration 600000 --skip_train
 done
 
@@ -1547,7 +1545,7 @@ python evaluate_all.py
 python summarize_results.py
 
 # 4. FPS 测试
-for exp in exp1_baseline exp2_perceptual exp3_adaptive exp4_temporal exp5_perc_adapt exp6_perc_temp exp7_adapt_temp exp8_full; do
+for exp in exp1_baseline exp2_perceptual exp3_temporal exp4_combined; do
   python fps_benchmark_dataset.py -m output/${exp}_${SUBJECT} --iteration 600000 --n_iter 500 --skip_train
 done
 ```
@@ -1559,19 +1557,19 @@ done
 tensorboard --logdir output --port 6006
 
 # 生成对比视频
-for exp in exp1_baseline exp8_full; do
+for exp in exp1_baseline exp4_combined; do
   ffmpeg -framerate 25 -i output/${exp}_${SUBJECT}/val/ours_600000/renders/%05d.png -c:v libx264 -pix_fmt yuv420p ${exp}_val.mp4
 done
 ```
 
 ### 8.5 预期时间成本
 
-| 阶段 | 单次实验 | 全部8个实验 |
+| 阶段 | 单次实验 | 全部4个实验 |
 |-----|---------|-----------|
-| 训练 (600k iter) | ~20-30 小时 | ~160-240 小时 |
-| 渲染 | ~10-20 分钟 | ~80-160 分钟 |
-| 评估 | ~5-10 分钟 | ~40-80 分钟 |
-| **总计** | **~20-30 小时** | **~170-250 小时** |
+| 训练 (600k iter) | ~20-30 小时 | ~80-120 小时 |
+| 渲染 | ~10-20 分钟 | ~40-80 分钟 |
+| 评估 | ~5-10 分钟 | ~20-40 分钟 |
+| **总计** | **~20-30 小时** | **~90-130 小时** |
 
 **建议**: 使用多 GPU 并行训练不同实验，或在多台机器上分布式执行。
 
@@ -1676,7 +1674,6 @@ GaussianAvatars/
 │   └── flame_gaussian_model.py
 ├── utils/                  # 工具函数
 │   ├── perceptual_loss.py
-│   ├── adaptive_densification.py
 │   └── temporal_consistency.py
 ├── train.py                # 训练脚本
 ├── render.py               # 渲染脚本
@@ -1690,15 +1687,15 @@ GaussianAvatars/
 ---
 
 **实验完成标志**:
-- ✅ 8 个实验全部训练完成
-- ✅ 所有实验渲染完成
+- ✅ 4 个实验全部训练完成
+- ✅ 对应实验渲染完成
 - ✅ 评估指标计算完成
 - ✅ 结果汇总与可视化完成
 - ✅ FPS 基准测试完成
 
 **预期成果**:
-1. 定量证明三个创新模块的有效性
-2. 定性展示渲染质量的提升
+1. 定量证明两个创新模块的有效性
+2. 定性展示渲染质量与时序表现的提升
 3. 分析创新之间的协同效应
 4. 为未来研究提供基准和见解
 
