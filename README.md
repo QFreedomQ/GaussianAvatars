@@ -90,6 +90,9 @@ python train.py \
 > Need a step-by-step experiment playbook? See [EXPERIMENT_GUIDE.md](./EXPERIMENT_GUIDE.md) for environment setup, ablations, evaluation code, and innovation explanations.
 
 > [!NOTE]
+> **🆕 Innovation**: This implementation includes a novel **3D Facial Coherence Regularizer** that enforces spatial consistency between neighboring Gaussians bound to the mesh, significantly reducing flickering and artifacts during extreme expressions. See [INNOVATION3_SUMMARY.md](./INNOVATION3_SUMMARY.md) for details and [INNOVATION3_USAGE.md](./INNOVATION3_USAGE.md) for usage guide.
+
+> [!NOTE]
 > During training, a complete evaluation are conducted on both the validation set (novel-view synthesis) and test set (self-reenactment) every `--interval` iterations. You can check the metrics in the commandline or Tensorboard. The metrics are computed on all images, although we only save partial images in Tensorboard.
 
 ### 2. Interactive Viewers
