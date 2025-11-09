@@ -117,6 +117,16 @@ class OptimizationParams(ParamGroup):
         # Source: PointAvatar (CVPR 2023), FlashAvatar (ICCV 2023)
         self.lambda_temporal = 0.01  # Weight for temporal consistency loss
         self.use_temporal_consistency = False  # Enable temporal smoothness (default: disabled)
+        
+        # Innovation 3: 3D Facial Coherence Regularizer
+        # NEW: Enforces spatial consistency between neighboring Gaussians on mesh
+        self.lambda_coherence = 0.0  # Weight for facial coherence loss (default: disabled)
+        self.use_facial_coherence = False  # Enable facial coherence regularization
+        self.coherence_use_edge_neighbors = True  # Use edge-connected neighbors
+        self.coherence_use_face_neighbors = True  # Use face-adjacent neighbors
+        self.disable_coherence_edge_neighbors = False  # Optionally disable edge neighbors
+        self.disable_coherence_face_neighbors = False  # Optionally disable face neighbors
+        self.coherence_adaptive = False  # Use adaptive weighting based on deformation
 
         super().__init__(parser, "Optimization Parameters")
 

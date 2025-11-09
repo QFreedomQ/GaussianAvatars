@@ -34,6 +34,9 @@ from utils.perceptual_loss import CombinedPerceptualLoss
 # Innovation 2: Temporal Consistency Regularization
 from utils.temporal_consistency import TemporalConsistencyLoss
 
+# Innovation 3: 3D Facial Coherence Regularizer
+from utils.facial_coherence_loss import FacialCoherenceRegularizer, AdaptiveCoherenceRegularizer
+
 try:
     from torch.utils.tensorboard import SummaryWriter
     TENSORBOARD_FOUND = True
@@ -85,6 +88,42 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     elif temporal_flag:
         print("[Innovation 2] WARNING: Temporal consistency requested but no FLAME binding detected; skipping.")
 
+    # Innovation 3: Initialize facial coherence regularizer
+    coherence_loss_fn = None
+    coherence_flag = getattr(opt, 'use_facial_coherence', False) and getattr(opt, 'lambda_coherence', 0) > 0
+    if isinstance(gaussians, FlameGaussianModel) and coherence_flag and gaussians.binding is not None:
+        if gaussians.face_center is None or gaussians.face_scaling is None:
+            gaussians.select_mesh_by_timestep(0)
+        use_adaptive = getattr(opt, 'coherence_adaptive', False)
+        use_edge_neighbors = getattr(opt, 'coherence_use_edge_neighbors', True)
+        if getattr(opt, 'disable_coherence_edge_neighbors', False):
+            use_edge_neighbors = False
+        use_face_neighbors = getattr(opt, 'coherence_use_face_neighbors', True)
+        if getattr(opt, 'disable_coherence_face_neighbors', False):
+            use_face_neighbors = False
+        coherence_kwargs = {
+            'use_edge_neighbors': use_edge_neighbors,
+            'use_face_neighbors': use_face_neighbors
+        }
+        if use_adaptive:
+            coherence_loss_fn = AdaptiveCoherenceRegularizer(**coherence_kwargs)
+        else:
+            coherence_loss_fn = FacialCoherenceRegularizer(**coherence_kwargs)
+
+        try:
+            binding_cpu = gaussians.binding
+            faces_tensor = gaussians.faces
+            if faces_tensor.dim() == 3:
+                faces_tensor = faces_tensor.squeeze(0)
+            initial_local_xyz = gaussians._xyz.detach() * gaussians.face_scaling[gaussians.binding].detach()
+            coherence_loss_fn.initialize_reference(initial_local_xyz, binding_cpu, faces_tensor)
+            print(f"[Innovation 3] Facial coherence enabled (lambda_coherence={opt.lambda_coherence}, adaptive={use_adaptive})")
+        except Exception as err:
+            coherence_loss_fn = None
+            print(f"[Innovation 3] WARNING: Failed to initialize facial coherence regularizer ({err}).")
+    elif coherence_flag:
+        print("[Innovation 3] WARNING: Facial coherence requested but no FLAME binding detected; skipping.")
+
     bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
 
@@ -103,6 +142,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     # viewpoint_stack = None
     ema_loss_for_log = 0.0
     progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
+    coherence_runtime_error_logged = False
     first_iter += 1
     for iteration in range(first_iter, opt.iterations + 1):        
         if network_gui.conn == None:
@@ -191,6 +231,30 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             )
             losses['temporal'] = temporal_loss * opt.lambda_temporal
 
+        # Innovation 3: Add facial coherence loss
+        if coherence_loss_fn is not None and gaussians.binding is not None and hasattr(opt, 'lambda_coherence') and opt.lambda_coherence > 0:
+            try:
+                # Compute coherence loss on local coordinates
+                current_local_xyz = gaussians._xyz * gaussians.face_scaling[gaussians.binding]
+                
+                # Add adaptive weighting if using AdaptiveCoherenceRegularizer
+                if isinstance(coherence_loss_fn, AdaptiveCoherenceRegularizer):
+                    if getattr(coherence_loss_fn, 'reference_positions', None) is not None:
+                        ref_positions = coherence_loss_fn.reference_positions.to(current_local_xyz.device)
+                        deformation_mag = (current_local_xyz - ref_positions).norm(dim=-1)
+                        coherence_loss = coherence_loss_fn(current_local_xyz, deformation_magnitude=deformation_mag)
+                    else:
+                        coherence_loss = coherence_loss_fn(current_local_xyz)
+                else:
+                    coherence_loss = coherence_loss_fn(current_local_xyz)
+                
+                losses['coherence'] = coherence_loss * opt.lambda_coherence
+            except Exception as err:
+                # Log error once to avoid spam
+                if not coherence_runtime_error_logged:
+                    print(f"[Innovation 3] WARNING: Coherence loss computation failed: {err}")
+                    coherence_runtime_error_logged = True
+
         if gaussians.binding != None:
             if opt.metric_xyz:
                 losses['xyz'] = F.relu((gaussians._xyz*gaussians.face_scaling[gaussians.binding])[visibility_filter] - opt.threshold_xyz).norm(dim=1).mean() * opt.lambda_xyz
@@ -239,11 +303,13 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                     postfix["lap"] = f"{losses['lap']:.{7}f}"
                 if 'dynamic_offset_std' in losses:
                     postfix["dynamic_offset_std"] = f"{losses['dynamic_offset_std']:.{7}f}"
-                # Innovation 1 & 2: Add new loss terms to progress bar
+                # Innovation 1, 2 & 3: Add new loss terms to progress bar
                 if 'perceptual' in losses:
                     postfix["percep"] = f"{losses['perceptual']:.{7}f}"
                 if 'temporal' in losses:
                     postfix["temp"] = f"{losses['temporal']:.{7}f}"
+                if 'coherence' in losses:
+                    postfix["coher"] = f"{losses['coherence']:.{7}f}"
                 progress_bar.set_postfix(postfix)
                 progress_bar.update(10)
             if iteration == opt.iterations:
@@ -317,6 +383,8 @@ def training_report(tb_writer, iteration, losses, elapsed, testing_iterations, s
             tb_writer.add_scalar('train_loss_patches/perceptual_loss', losses['perceptual'].item(), iteration)
         if 'temporal' in losses:
             tb_writer.add_scalar('train_loss_patches/temporal_loss', losses['temporal'].item(), iteration)
+        if 'coherence' in losses:
+            tb_writer.add_scalar('train_loss_patches/coherence_loss', losses['coherence'].item(), iteration)
         tb_writer.add_scalar('train_loss_patches/total_loss', losses['total'].item(), iteration)
         tb_writer.add_scalar('iter_time', elapsed, iteration)
 
