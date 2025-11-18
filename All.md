@@ -828,6 +828,8 @@ python render.py \
   --select_camera_id 8  # 前视图
 ```
 
+> 💡 **BRISQUE Boost 质量增强**：跨身份渲染时，`render.py` 默认会自动启用基于自然图像统计的后处理模块（`balanced` 模式），对输出图像执行去噪、对比度自适应、颜色平衡与边缘增强，从而显著降低 BRISQUE 分数（提高视觉质量）。如需关闭或切换不同强度，可通过 `--cross_identity_quality_mode off|subtle|balanced|aggressive` 控制。
+
 输出目录：`${MODEL_PATH}/${TGT_SUBJECT}_FREE/ours_600000/`
 
 #### 6.3.2 评估指标

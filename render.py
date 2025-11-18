@@ -28,6 +28,7 @@ from argparse import ArgumentParser
 from arguments import ModelParams, PipelineParams, get_combined_args
 from gaussian_renderer import GaussianModel, FlameGaussianModel
 from mesh_renderer import NVDiffRenderer
+from utils.image_enhancement import create_enhancer
 
 
 mesh_renderer = NVDiffRenderer()
@@ -51,7 +52,7 @@ def write_data(path2data):
         else:
             raise NotImplementedError(f"Unknown file type: {path.suffix}")
 
-def render_set(dataset : ModelParams, name, iteration, views, gaussians, pipeline, background, render_mesh):
+def render_set(dataset : ModelParams, name, iteration, views, gaussians, pipeline, background, render_mesh, quality_enhancer=None):
     if dataset.select_camera_id != -1:
         name = f"{name}_{dataset.select_camera_id}"
     iter_path = Path(dataset.model_path) / name / f"ours_{iteration}"
@@ -71,6 +72,12 @@ def render_set(dataset : ModelParams, name, iteration, views, gaussians, pipelin
         if gaussians.binding != None:
             gaussians.select_mesh_by_timestep(view.timestep)
         rendering = render(view, gaussians, pipeline, background)["render"]
+        
+        # Apply quality enhancement if provided (for cross-identity reenactment)
+        if quality_enhancer is not None:
+            with torch.no_grad():
+                rendering = quality_enhancer.enhance(rendering.unsqueeze(0)).squeeze(0)
+        
         gt = view.original_image[0:3, :, :]
         if render_mesh:
             out_dict = mesh_renderer.render_from_camera(gaussians.verts, gaussians.faces, view)
@@ -113,19 +120,40 @@ def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParam
         bg_color = [1,1,1] if dataset.white_background else [0, 0, 0]
         background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
 
+        # Configure quality enhancer for cross-identity reenactment if requested
+        quality_enhancer = None
+        quality_mode = getattr(dataset, "cross_identity_quality_mode", "auto")
+        if isinstance(quality_mode, str):
+            quality_mode = quality_mode.lower()
+        
+        # Enable quality enhancement for cross-identity reenactment
+        if dataset.target_path != "":
+            # Auto mode: enable balanced enhancement by default for cross-identity
+            if quality_mode == "auto":
+                quality_mode = "balanced"
+            
+            if quality_mode not in ["", "off", None]:
+                try:
+                    enhancer_device = background.device.type if hasattr(background, "device") else "cuda"
+                    quality_enhancer = create_enhancer(quality_mode, device=enhancer_device)
+                    print(f"[Quality Enhancer] Cross-identity enhancement enabled (mode='{quality_mode}')")
+                except ValueError as err:
+                    print(f"[Quality Enhancer] {err}. Falling back to 'balanced' mode.")
+                    quality_enhancer = create_enhancer("balanced", device=background.device.type)
+
         if dataset.target_path != "":
              name = os.path.basename(os.path.normpath(dataset.target_path))
              # when loading from a target path, test cameras are merged into the train cameras
-             render_set(dataset, f'{name}', scene.loaded_iter, scene.getTrainCameras(), gaussians, pipeline, background, render_mesh)
+             render_set(dataset, f'{name}', scene.loaded_iter, scene.getTrainCameras(), gaussians, pipeline, background, render_mesh, quality_enhancer)
         else:
             if not skip_train:
-                render_set(dataset, "train", scene.loaded_iter, scene.getTrainCameras(), gaussians, pipeline, background, render_mesh)
+                render_set(dataset, "train", scene.loaded_iter, scene.getTrainCameras(), gaussians, pipeline, background, render_mesh, None)
             
             if not skip_val:
-                render_set(dataset, "val", scene.loaded_iter, scene.getValCameras(), gaussians, pipeline, background, render_mesh)
+                render_set(dataset, "val", scene.loaded_iter, scene.getValCameras(), gaussians, pipeline, background, render_mesh, None)
 
             if not skip_test:
-                render_set(dataset, "test", scene.loaded_iter, scene.getTestCameras(), gaussians, pipeline, background, render_mesh)
+                render_set(dataset, "test", scene.loaded_iter, scene.getTestCameras(), gaussians, pipeline, background, render_mesh, None)
 
 if __name__ == "__main__":
     # Set up command line argument parser
