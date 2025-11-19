@@ -59,6 +59,7 @@ class ModelParams(ParamGroup):
         self.disable_flame_static_offset = False
         self.not_finetune_flame_params = False
         self.select_camera_id = -1
+        self.cross_identity_quality_mode = "auto"  # Quality enhancement: "auto" (default), "off", "subtle", "balanced", "aggressive"
         super().__init__(parser, "Loading Parameters", sentinel)
 
     def extract(self, args):
