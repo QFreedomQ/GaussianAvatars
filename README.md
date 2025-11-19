@@ -87,7 +87,7 @@ python train.py \
 </details>
 
 > [!TIP]
-> Need a step-by-step experiment playbook? See [EXPERIMENT_GUIDE.md](./EXPERIMENT_GUIDE.md) for environment setup, ablations, evaluation code, and innovation explanations.
+> Need a step-by-step experiment playbook? See [All.md](./All.md) for environment setup, ablations, evaluation code, and innovation explanations.
 
 > [!NOTE]
 > During training, a complete evaluation are conducted on both the validation set (novel-view synthesis) and test set (self-reenactment) every `--interval` iterations. You can check the metrics in the commandline or Tensorboard. The metrics are computed on all images, although we only save partial images in Tensorboard.
@@ -143,7 +143,7 @@ python local_viewer.py \
 ### [3. Offline Rendering & Evaluation](doc/offline_render.md)
 
 > [!TIP]
-> 📖 **Experiment Workflow Guide**: Refer to the [EXPERIMENT_GUIDE.md](./EXPERIMENT_GUIDE.md) for end-to-end steps covering setup, training, rendering, and metric evaluation.
+> 📖 **Experiment Workflow Guide**: Refer to the [All.md](./All.md) for end-to-end steps covering setup, training, rendering, and metric evaluation.
 
 ## Cite
 

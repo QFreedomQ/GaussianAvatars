@@ -114,10 +114,7 @@ class OptimizationParams(ParamGroup):
         self.use_vgg_loss = True  # Enable VGG perceptual loss (effective when perceptual weight > 0)
         self.use_lpips_loss = False  # LPIPS is slower, disabled by default
         
-        # Innovation 2: Temporal Consistency Regularization
-        # Source: PointAvatar (CVPR 2023), FlashAvatar (ICCV 2023)
-        self.lambda_temporal = 0.01  # Weight for temporal consistency loss
-        self.use_temporal_consistency = False  # Enable temporal smoothness (default: disabled)
+        # Innovation 2: Temporal Consistency Regularization - REMOVED
 
         super().__init__(parser, "Optimization Parameters")
 

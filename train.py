@@ -31,8 +31,7 @@ from arguments import ModelParams, PipelineParams, OptimizationParams
 # Innovation 1: Perceptual Loss Enhancement
 from utils.perceptual_loss import CombinedPerceptualLoss
 
-# Innovation 2: Temporal Consistency Regularization
-from utils.temporal_consistency import TemporalConsistencyLoss
+# Innovation 2: Temporal Consistency Regularization - REMOVED
 
 try:
     from torch.utils.tensorboard import SummaryWriter
@@ -76,14 +75,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     elif getattr(opt, 'lambda_perceptual', 0) > 0:
         print("[Innovation 1] WARNING: lambda_perceptual > 0 but perceptual loss module could not be initialized.")
 
-    # Innovation 2: Initialize temporal consistency loss
+    # Innovation 2: Initialize temporal consistency loss - REMOVED
     temporal_loss_fn = None
-    temporal_flag = getattr(opt, 'use_temporal_consistency', False) and getattr(opt, 'lambda_temporal', 0) > 0
-    if isinstance(gaussians, FlameGaussianModel) and temporal_flag:
-        temporal_loss_fn = TemporalConsistencyLoss().to('cuda')
-        print(f"[Innovation 2] Temporal consistency enabled (lambda_temporal={opt.lambda_temporal})")
-    elif temporal_flag:
-        print("[Innovation 2] WARNING: Temporal consistency requested but no FLAME binding detected; skipping.")
 
     bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
@@ -181,15 +174,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         if perceptual_loss_fn is not None and hasattr(opt, 'lambda_perceptual') and opt.lambda_perceptual > 0:
             losses['perceptual'] = perceptual_loss_fn(image, gt_image) * opt.lambda_perceptual
 
-        # Innovation 2: Add temporal consistency loss
-        if temporal_loss_fn is not None and gaussians.binding is not None and hasattr(opt, 'lambda_temporal') and opt.lambda_temporal > 0:
-            temporal_loss = temporal_loss_fn(
-                gaussians.flame_param,
-                viewpoint_cam.timestep,
-                gaussians.num_timesteps,
-                dynamic_offset=gaussians.flame_param['dynamic_offset'] if 'dynamic_offset' in gaussians.flame_param else None
-            )
-            losses['temporal'] = temporal_loss * opt.lambda_temporal
+        # Innovation 2: Add temporal consistency loss - REMOVED
 
         if gaussians.binding != None:
             if opt.metric_xyz:
