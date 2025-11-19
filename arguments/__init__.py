@@ -114,7 +114,12 @@ class OptimizationParams(ParamGroup):
         self.use_vgg_loss = True  # Enable VGG perceptual loss (effective when perceptual weight > 0)
         self.use_lpips_loss = False  # LPIPS is slower, disabled by default
         
-        # Innovation 2: Temporal Consistency Regularization - REMOVED
+        # Innovation 2: Expression-Dependent Appearance Network (EDAN)
+        # Predicts per-vertex color modulation based on expression parameters
+        # to capture dynamic appearance changes (wrinkles, shadows) that vary with expressions
+        self.use_appearance_net = True  # Enable expression-dependent appearance network
+        self.appearance_net_lr = 5e-5  # Learning rate for appearance network
+        self.lambda_appearance_reg = 0.0  # Regularization weight for appearance network (L2 on predictions)
 
         super().__init__(parser, "Optimization Parameters")
 

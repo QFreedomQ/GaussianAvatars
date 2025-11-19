@@ -9,6 +9,7 @@
 from pathlib import Path
 import numpy as np
 import torch
+import torch.nn as nn
 # from vht.model.flame import FlameHead
 from flame_model.flame import FlameHead
 
@@ -16,6 +17,36 @@ from .gaussian_model import GaussianModel
 from utils.graphics_utils import compute_face_orientation
 # from pytorch3d.transforms import matrix_to_quaternion
 from roma import rotmat_to_unitquat, quat_xyzw_to_wxyz
+
+
+# Innovation 2: Expression-Dependent Appearance Network (EDAN)
+class AppearanceNetwork(nn.Module):
+    """
+    Lightweight MLP that predicts per-vertex appearance modulation based on expression parameters.
+    This allows the model to capture expression-dependent lighting and texture changes 
+    (e.g., wrinkles, shadows) that cannot be represented by static Gaussian colors.
+    """
+    def __init__(self, input_dim, output_dim, hidden_dim=128, num_layers=3):
+        super().__init__()
+        
+        layers = []
+        layers.append(nn.Linear(input_dim, hidden_dim))
+        layers.append(nn.ReLU(inplace=True))
+        
+        for _ in range(num_layers - 2):
+            layers.append(nn.Linear(hidden_dim, hidden_dim))
+            layers.append(nn.ReLU(inplace=True))
+        
+        layers.append(nn.Linear(hidden_dim, output_dim))
+        
+        self.net = nn.Sequential(*layers)
+        
+        # Initialize to zero so that the network starts with no effect
+        nn.init.zeros_(self.net[-1].weight)
+        nn.init.zeros_(self.net[-1].bias)
+
+    def forward(self, x):
+        return self.net(x)
 
 
 class FlameGaussianModel(GaussianModel):
@@ -34,11 +65,20 @@ class FlameGaussianModel(GaussianModel):
         ).cuda()
         self.flame_param = None
         self.flame_param_orig = None
+        self.num_flame_verts = self.flame_model.v_template.shape[0]
 
         # binding is initialized once the mesh topology is known
         if self.binding is None:
             self.binding = torch.arange(len(self.flame_model.faces)).cuda()
             self.binding_counter = torch.ones(len(self.flame_model.faces), dtype=torch.int32).cuda()
+        
+        # Innovation 2: Initialize Expression-Dependent Appearance Network
+        # Input: expression (n_expr) + jaw_pose (3)
+        # Output: 3D color offset for each FLAME vertex
+        self.appearance_net = None  # Will be initialized after knowing num_verts and data
+        self.use_appearance_net = True
+        self.appearance_condition_dim = self.n_expr + 3
+        self.current_appearance_offset = None
 
     def load_meshes(self, train_meshes, test_meshes, tgt_train_meshes, tgt_test_meshes):
         if self.flame_param is None:
@@ -83,6 +123,20 @@ class FlameGaussianModel(GaussianModel):
                 self.flame_param[k] = v.float().cuda()
             
             self.flame_param_orig = {k: v.clone() for k, v in self.flame_param.items()}
+            
+            # Innovation 2: Initialize appearance network now that we know num_verts
+            # Network predicts per-vertex color offsets based on expression
+            if self.appearance_net is None:
+                input_dim = self.n_expr + 3  # expr + jaw_pose
+                # Output: per-vertex RGB offsets (will be propagated to Gaussians via binding)
+                output_dim = num_verts * 3
+                self.appearance_net = AppearanceNetwork(
+                    input_dim=input_dim,
+                    output_dim=output_dim,
+                    hidden_dim=128,
+                    num_layers=3
+                ).cuda()
+                print(f"[Innovation 2] Expression-Dependent Appearance Network initialized: {input_dim} -> {output_dim}")
         else:
             # NOTE: not sure when this happens
             import ipdb; ipdb.set_trace()
@@ -133,6 +187,24 @@ class FlameGaussianModel(GaussianModel):
             dynamic_offset=flame_param['dynamic_offset'][[timestep]],
         )
         self.update_mesh_properties(verts, verts_cano)
+        
+        # Innovation 2: Compute expression-dependent appearance offset
+        if self.use_appearance_net and self.appearance_net is not None:
+            # Prepare condition input: [expr, jaw_pose]
+            curr_expr = flame_param['expr'][[timestep]]  # [1, n_expr]
+            curr_jaw = flame_param['jaw_pose'][[timestep]]  # [1, 3]
+            condition = torch.cat([curr_expr, curr_jaw], dim=1)  # [1, n_expr + 3]
+            
+            # Predict per-vertex color offsets [1, num_verts * 3]
+            vertex_offsets = self.appearance_net(condition)  # [1, V * 3]
+            vertex_offsets = vertex_offsets.reshape(1, self.num_flame_verts, 3)  # [1, V, 3]
+            
+            # Store for later use in rendering (propagate to Gaussians via binding)
+            self.current_appearance_offset = vertex_offsets.squeeze(0)  # [V, 3]
+            self.current_gaussian_appearance_delta = self._vertex_offsets_to_gaussians(self.current_appearance_offset)
+        else:
+            self.current_appearance_offset = None
+            self.current_gaussian_appearance_delta = None
     
     def update_mesh_properties(self, verts, verts_cano):
         faces = self.flame_model.faces
@@ -153,6 +225,49 @@ class FlameGaussianModel(GaussianModel):
         # for mesh regularization
         self.verts_cano = verts_cano
     
+    def _vertex_offsets_to_gaussians(self, vertex_offsets):
+        """
+        Propagate per-vertex appearance offsets to Gaussians via binding.
+        Each Gaussian is bound to a face, so we average the offsets of the face's vertices.
+        
+        Args:
+            vertex_offsets: [V, 3] tensor of per-vertex color offsets
+            
+        Returns:
+            [N, 1, 3] tensor of per-Gaussian color offsets
+        """
+        if vertex_offsets is None or self.binding is None:
+            return None
+        
+        faces = self.flame_model.faces.to(vertex_offsets.device).long()  # [F, 3]
+        binding = self.binding.to(vertex_offsets.device).long()  # [N]
+        bound_faces = faces[binding]  # [N, 3]
+        
+        v0_offsets = vertex_offsets[bound_faces[:, 0]]  # [N, 3]
+        v1_offsets = vertex_offsets[bound_faces[:, 1]]  # [N, 3]
+        v2_offsets = vertex_offsets[bound_faces[:, 2]]  # [N, 3]
+        
+        gaussian_offsets = (v0_offsets + v1_offsets + v2_offsets) / 3.0  # [N, 3]
+        
+        return gaussian_offsets.unsqueeze(1)  # [N, 1, 3]
+    
+    @property
+    def get_features(self):
+        """
+        Override base class to add expression-dependent appearance modulation.
+        Returns concatenated [features_dc, features_rest] with dynamic appearance applied to DC component.
+        """
+        features_dc = self._features_dc
+        features_rest = self._features_rest
+        
+        # Innovation 2: Apply expression-dependent appearance offset
+        if self.use_appearance_net and self.current_gaussian_appearance_delta is not None:
+            # Add the predicted offset to the DC component (base color)
+            # Scale down the offset to prevent overly strong changes
+            features_dc = features_dc + self.current_gaussian_appearance_delta * 0.1
+        
+        return torch.cat((features_dc, features_rest), dim=1)
+    
     def compute_dynamic_offset_loss(self):
         # loss_dynamic = (self.flame_param['dynamic_offset'][[self.timestep]] - self.flame_param_orig['dynamic_offset'][[self.timestep]]).norm(dim=-1)
         loss_dynamic = self.flame_param['dynamic_offset'][[self.timestep]].norm(dim=-1)
@@ -170,6 +285,17 @@ class FlameGaussianModel(GaussianModel):
         diff = (lap_wo - lap_w) ** 2
         diff = diff.sum(dim=-1, keepdim=True)
         return diff.mean()
+    
+    def compute_appearance_regularization_loss(self):
+        """
+        Innovation 2: Regularization loss for appearance network.
+        Encourages the predicted appearance offsets to be small and smooth.
+        """
+        if not self.use_appearance_net or self.current_appearance_offset is None:
+            return torch.tensor(0.0, device='cuda')
+        
+        # L2 regularization on appearance offsets
+        return torch.norm(self.current_appearance_offset, p=2) / self.current_appearance_offset.numel()
     
     def training_setup(self, training_args):
         super().training_setup(training_args)
@@ -215,6 +341,13 @@ class FlameGaussianModel(GaussianModel):
         # self.flame_param['dynamic_offset'].requires_grad = True
         # param_dynamic_offset = {'params': [self.flame_param['dynamic_offset']], 'lr': 1.6e-6, "name": "dynamic_offset"}
         # self.optimizer.add_param_group(param_dynamic_offset)
+        
+        # Innovation 2: Add appearance network to optimizer
+        if self.use_appearance_net and self.appearance_net is not None:
+            appearance_lr = getattr(training_args, 'appearance_net_lr', 5e-5)
+            param_appearance = {'params': self.appearance_net.parameters(), 'lr': appearance_lr, "name": "appearance_net"}
+            self.optimizer.add_param_group(param_appearance)
+            print(f"[Innovation 2] Appearance network added to optimizer with lr={appearance_lr}")
 
     def save_ply(self, path):
         super().save_ply(path)

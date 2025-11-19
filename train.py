@@ -45,6 +45,11 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     if dataset.bind_to_mesh:
         gaussians = FlameGaussianModel(dataset.sh_degree, dataset.disable_flame_static_offset, dataset.not_finetune_flame_params)
         mesh_renderer = NVDiffRenderer()
+        # Innovation 2: Enable/disable appearance network
+        if hasattr(opt, 'use_appearance_net'):
+            gaussians.use_appearance_net = opt.use_appearance_net
+            if opt.use_appearance_net:
+                print(f"[Innovation 2] Expression-Dependent Appearance Network enabled")
     else:
         gaussians = GaussianModel(dataset.sh_degree)
     scene = Scene(dataset, gaussians)
@@ -202,6 +207,11 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
             if opt.lambda_laplacian != 0:
                 losses['lap'] = gaussians.compute_laplacian_loss() * opt.lambda_laplacian
+            
+            # Innovation 2: Add appearance regularization loss
+            if hasattr(opt, 'lambda_appearance_reg') and opt.lambda_appearance_reg > 0:
+                if hasattr(gaussians, 'compute_appearance_regularization_loss'):
+                    losses['appearance_reg'] = gaussians.compute_appearance_regularization_loss() * opt.lambda_appearance_reg
 
         losses['total'] = sum([v for k, v in losses.items()])
 
