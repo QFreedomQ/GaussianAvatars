@@ -31,8 +31,6 @@ from arguments import ModelParams, PipelineParams, OptimizationParams
 # Innovation 1: Perceptual Loss Enhancement
 from utils.perceptual_loss import CombinedPerceptualLoss
 
-# Innovation 2: Temporal Consistency Regularization - REMOVED
-
 try:
     from torch.utils.tensorboard import SummaryWriter
     TENSORBOARD_FOUND = True
@@ -45,11 +43,6 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     if dataset.bind_to_mesh:
         gaussians = FlameGaussianModel(dataset.sh_degree, dataset.disable_flame_static_offset, dataset.not_finetune_flame_params)
         mesh_renderer = NVDiffRenderer()
-        # Innovation 2: Enable/disable appearance network
-        if hasattr(opt, 'use_appearance_net'):
-            gaussians.use_appearance_net = opt.use_appearance_net
-            if opt.use_appearance_net:
-                print(f"[Innovation 2] Expression-Dependent Appearance Network enabled")
     else:
         gaussians = GaussianModel(dataset.sh_degree)
     scene = Scene(dataset, gaussians)
@@ -79,9 +72,6 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             print(f"[Innovation 1] Perceptual loss enabled (lambda_perceptual={opt.lambda_perceptual}, use_vgg={use_vgg}, use_lpips={use_lpips})")
     elif getattr(opt, 'lambda_perceptual', 0) > 0:
         print("[Innovation 1] WARNING: lambda_perceptual > 0 but perceptual loss module could not be initialized.")
-
-    # Innovation 2: Initialize temporal consistency loss - REMOVED
-    temporal_loss_fn = None
 
     bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
@@ -179,8 +169,6 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         if perceptual_loss_fn is not None and hasattr(opt, 'lambda_perceptual') and opt.lambda_perceptual > 0:
             losses['perceptual'] = perceptual_loss_fn(image, gt_image) * opt.lambda_perceptual
 
-        # Innovation 2: Add temporal consistency loss - REMOVED
-
         if gaussians.binding != None:
             if opt.metric_xyz:
                 losses['xyz'] = F.relu((gaussians._xyz*gaussians.face_scaling[gaussians.binding])[visibility_filter] - opt.threshold_xyz).norm(dim=1).mean() * opt.lambda_xyz
@@ -207,11 +195,6 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
             if opt.lambda_laplacian != 0:
                 losses['lap'] = gaussians.compute_laplacian_loss() * opt.lambda_laplacian
-            
-            # Innovation 2: Add appearance regularization loss
-            if hasattr(opt, 'lambda_appearance_reg') and opt.lambda_appearance_reg > 0:
-                if hasattr(gaussians, 'compute_appearance_regularization_loss'):
-                    losses['appearance_reg'] = gaussians.compute_appearance_regularization_loss() * opt.lambda_appearance_reg
 
         losses['total'] = sum([v for k, v in losses.items()])
 
@@ -234,11 +217,9 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                     postfix["lap"] = f"{losses['lap']:.{7}f}"
                 if 'dynamic_offset_std' in losses:
                     postfix["dynamic_offset_std"] = f"{losses['dynamic_offset_std']:.{7}f}"
-                # Innovation 1 & 2: Add new loss terms to progress bar
+                # Innovation 1: Add perceptual loss to progress bar
                 if 'perceptual' in losses:
                     postfix["percep"] = f"{losses['perceptual']:.{7}f}"
-                if 'temporal' in losses:
-                    postfix["temp"] = f"{losses['temporal']:.{7}f}"
                 progress_bar.set_postfix(postfix)
                 progress_bar.update(10)
             if iteration == opt.iterations:
@@ -310,8 +291,6 @@ def training_report(tb_writer, iteration, losses, elapsed, testing_iterations, s
             tb_writer.add_scalar('train_loss_patches/dynamic_offset_std', losses['dynamic_offset_std'].item(), iteration)
         if 'perceptual' in losses:
             tb_writer.add_scalar('train_loss_patches/perceptual_loss', losses['perceptual'].item(), iteration)
-        if 'temporal' in losses:
-            tb_writer.add_scalar('train_loss_patches/temporal_loss', losses['temporal'].item(), iteration)
         tb_writer.add_scalar('train_loss_patches/total_loss', losses['total'].item(), iteration)
         tb_writer.add_scalar('iter_time', elapsed, iteration)
 
