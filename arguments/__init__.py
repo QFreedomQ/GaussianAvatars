@@ -127,18 +127,6 @@ class OptimizationParams(ParamGroup):
         self.lambda_normal_align = 0.01  # Normal alignment weight
         self.lambda_laplacian_smooth = 0.001  # Laplacian smoothness weight (renamed from lambda_laplacian)
         self.lambda_normal_consistency = 0.005  # Temporal normal consistency weight
-        
-        # Innovation 4: Adaptive Densification with View Coverage
-        # Source: Gaussian Surfels (SIGGRAPH Asia 2023), Mip-Splatting (CVPR 2024)
-        self.use_adaptive_densification = False  # Enable view-coverage-based adaptive densification
-        self.adaptive_densify_grad_threshold_min = 0.0001  # Minimum gradient threshold
-        self.adaptive_densify_grad_threshold_max = 0.0005  # Maximum gradient threshold
-        self.adaptive_coverage_factor = 0.5  # Coverage weight factor
-        
-        # Innovation 5: Facial ROI Attention
-        # Source: IDE-3D (ICCV 2023), FaceVerse (CVPR 2022)
-        self.use_facial_roi_attention = False  # Enable facial region-of-interest attention
-        self.lambda_roi = 0.05  # ROI-weighted loss weight
 
         super().__init__(parser, "Optimization Parameters")
 

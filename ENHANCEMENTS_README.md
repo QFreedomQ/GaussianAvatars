@@ -1,6 +1,6 @@
 # GaussianAvatars 增强模块使用指南
 
-本仓库在原始 GaussianAvatars 基础上新增了 **5 个进阶增强模块**，用于提升头部重建的质量、效率和跨身份一致性。
+本仓库在原始 GaussianAvatars 基础上新增了 **3 个进阶增强模块**，用于提升头部重建的质量和一致性。
 
 ---
 
@@ -11,8 +11,6 @@
 | **1** | 感知损失增强 | VGG/LPIPS 特征损失 | `--lambda_perceptual 0.05 --use_vgg_loss` |
 | **2** | 表达式自适应着色 | 表情条件外观 MLP | `--use_expr_adaptive_color --lambda_expr_color 0.01` |
 | **3** | 法线约束与曲率正则 | 几何一致性约束 | `--use_normal_regularization --lambda_normal_align 0.01` |
-| **4** | 动态密度过滤 | 视角覆盖自适应细分 | `--use_adaptive_densification` |
-| **5** | 面部区域注意力 | 关键区域加权损失 | `--use_facial_roi_attention --lambda_roi 0.05` |
 
 ---
 
@@ -23,15 +21,13 @@ GaussianAvatars/
 ├── utils/
 │   ├── expression_adaptive_color.py    # 模块 2：表达式自适应着色
 │   ├── normal_regularization.py        # 模块 3：法线约束与曲率正则
-│   ├── adaptive_densification.py       # 模块 4：动态密度过滤
-│   ├── facial_roi_attention.py         # 模块 5：面部区域注意力
 │   └── perceptual_loss.py              # 模块 1：感知损失（已存在）
 │
-├── arguments/__init__.py               # 新增 26 个参数
+├── arguments/__init__.py               # 新增 13 个参数
 ├── train.py                            # 集成感知损失（已完成）
 │
 ├── New.md                              # 原论文重构方案（中文）
-├── Change.md                           # 增强模块详解（中文，700+ 行）
+├── Change.md                           # 增强模块详解（中文，512 行）
 ├── SUMMARY.md                          # 实现总结
 ├── train_with_enhancements.sh         # 一键训练脚本
 └── ENHANCEMENTS_README.md             # 本文档
@@ -48,7 +44,7 @@ GaussianAvatars/
 export SUBJECT=306
 export DATA_DIR="data/UNION10_${SUBJECT}_EMO1234EXP234589_v16_DS2-0.5x_lmkSTAR_teethV3_SMOOTH_offsetS_whiteBg_maskBelowLine"
 
-# 2. 运行一键训练脚本（包含 Baseline + 5 个模块 + 最佳组合）
+# 2. 运行一键训练脚本（包含 Baseline + 3 个模块 + 最佳组合）
 chmod +x train_with_enhancements.sh
 ./train_with_enhancements.sh
 ```
@@ -58,9 +54,7 @@ chmod +x train_with_enhancements.sh
 2. Innovation 1（感知损失）
 3. Innovation 2（表达式自适应）
 4. Innovation 3（法线正则）
-5. Innovation 4（动态密度）
-6. Innovation 5（ROI 注意力）
-7. Best Combination（1+3+4 组合）
+5. Best Combination（1+3 组合）
 
 所有结果保存在 `output/` 目录，自动生成 JSON 指标和 MP4 视频。
 
@@ -115,32 +109,6 @@ python train.py \
 
 **预期效果**：表面更平滑，减少伪影和时序抖动，PSNR ↑0.5-1.0 dB。
 
-#### 模块 4：动态密度过滤
-```bash
-python train.py \
-  -s ${DATA_DIR} \
-  -m output/adaptive_densification \
-  --bind_to_mesh --white_background --eval --iterations 600000 \
-  --use_adaptive_densification \
-  --adaptive_densify_grad_threshold_min 0.0001 \
-  --adaptive_densify_grad_threshold_max 0.0005 \
-  --adaptive_coverage_factor 0.5
-```
-
-**预期效果**：训练速度 ↑20-30%，高斯数 ↓10-15%，显存占用减少。
-
-#### 模块 5：面部区域注意力
-```bash
-python train.py \
-  -s ${DATA_DIR} \
-  -m output/facial_roi_attention \
-  --bind_to_mesh --white_background --eval --iterations 600000 \
-  --use_facial_roi_attention \
-  --lambda_roi 0.05
-```
-
-**预期效果**：跨身份重演 BRISQUE ↓15-25%，关键区域（眼睛、嘴巴）细节提升。
-
 ---
 
 ### 方法 3：最佳组合（用于论文）
@@ -151,11 +119,10 @@ python train.py \
   -m output/best_combination \
   --bind_to_mesh --white_background --eval --iterations 600000 \
   --lambda_perceptual 0.05 --use_vgg_loss \
-  --use_normal_regularization --lambda_normal_align 0.01 --lambda_laplacian_smooth 0.001 \
-  --use_adaptive_densification --adaptive_coverage_factor 0.5
+  --use_normal_regularization --lambda_normal_align 0.01 --lambda_laplacian_smooth 0.001
 ```
 
-**预期效果**：综合提升，LPIPS ↓20%，PSNR ↑1 dB，训练速度 ↑15-20%。
+**预期效果**：综合提升，LPIPS ↓20%，PSNR ↑1 dB。
 
 ---
 
@@ -189,12 +156,12 @@ ffmpeg -i output/baseline/val/ours_600000/renders.mp4 \
 
 | 文档 | 内容 | 字数/行数 |
 |------|------|----------|
-| **New.md** | 原论文重构方案（中文）| 220 行 |
+| **New.md** | 原论文重构方案（中文）| 174 行 |
 |  | - 环境搭建、数据准备 | |
 |  | - 训练流程、评估管线 | |
 |  | - 可视化方法、命令速查 | |
-| **Change.md** | 增强模块详解（中文）| 700+ 行 |
-|  | - 5 个模块的原理、实现、使用 | |
+| **Change.md** | 增强模块详解（中文）| 512 行 |
+|  | - 3 个模块的原理、实现、使用 | |
 |  | - 参数调优指南 | |
 |  | - 预期效果对比 | |
 |  | - 论文撰写建议 | |
@@ -228,11 +195,6 @@ ffmpeg -i output/baseline/val/ours_600000/renders.mp4 \
 - 若细节丢失，降低到 0.005
 - 若仍有伪影，增加到 0.02
 
-### 动态密度因子
-- 默认 `adaptive_coverage_factor=0.5` 平衡细分与效率
-- 若高斯过少（PSNR 下降），降低到 0.3
-- 若仍过度细分，增加到 0.7
-
 ---
 
 ## ❓ 常见问题
@@ -241,18 +203,16 @@ ffmpeg -i output/baseline/val/ours_600000/renders.mp4 \
 A: 不传对应的 `--use_xxx` 参数即可（默认全部禁用）。
 
 ### Q2: 可以组合多个模块吗？
-A: 可以！推荐组合：感知损失 + 法线正则 + 动态密度。
+A: 可以！推荐组合：感知损失 + 法线正则。
 
 ### Q3: 训练时间会增加多少？
 A: - 感知损失：+5-10%
    - 其它模块：+2-5%
-   - 动态密度：反而减少 20-30%（加速收敛）
 
 ### Q4: 如何验证模块生效？
 A: 检查 TensorBoard：
    - 感知损失：`train_loss_patches/perceptual_loss` 曲线应下降
    - 法线正则：`train_loss/normal_align` 曲线应下降
-   - 动态密度：`total_points` 增长应放缓
 
 ### Q5: 论文中应该报告哪些指标？
 A: - **必须**：PSNR、SSIM、LPIPS（val + test）
@@ -275,14 +235,6 @@ A: - **必须**：PSNR、SSIM、LPIPS（val + test）
 - Jiang et al. "InstantAvatar: Learning Avatars from Monocular Video in 60 Seconds." CVPR 2023.
 - Peng et al. "Neural Body: Implicit Neural Representations with Structured Latent Codes." ICCV 2021.
 
-### 模块 4：动态密度
-- Pintore et al. "Gaussian Surfels: Surface-aligned Gaussians for 3D Reconstruction." SIGGRAPH Asia 2023.
-- Yu et al. "Mip-Splatting: Alias-free 3D Gaussian Splatting." CVPR 2024.
-
-### 模块 5：面部 ROI
-- Sun et al. "IDE-3D: Interactive Disentangled Editing for High-Resolution 3D-aware Portrait Synthesis." ICCV 2023.
-- Wang et al. "FaceVerse." CVPR 2022.
-
 ---
 
 ## 🎓 引用
@@ -304,13 +256,13 @@ A: - **必须**：PSNR、SSIM、LPIPS（val + test）
 ## 📧 联系方式
 
 - **问题反馈**：请在仓库中提 Issue
-- **论文合作**：请查阅 `Change.md` 第 10 节的论文撰写建议
+- **论文合作**：请查阅 `Change.md` 第 8 节的论文撰写建议
 - **代码贡献**：欢迎 Pull Request
 
 ---
 
-**版本**: 1.0  
-**最后更新**: 2024-11-20  
+**版本**: 1.1  
+**最后更新**: 2024-11-21  
 **许可证**: 与原 GaussianAvatars 保持一致（CC-BY-NC-SA-4.0）
 
 ---
