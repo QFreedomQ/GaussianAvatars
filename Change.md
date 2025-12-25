@@ -9,11 +9,10 @@
 1. [增强模块总览](#1-增强模块总览)
 2. [模块1：感知损失调度](#2-模块1感知损失调度)
 3. [模块2：表达式自适应着色](#3-模块2表达式自适应着色)
-4. [模块3：法线约束与曲率正则](#4-模块3法线约束与曲率正则)
-5. [集成训练命令](#5-集成训练命令)
-6. [参数调优指南](#6-参数调优指南)
-7. [预期效果对比](#7-预期效果对比)
-8. [论文撰写建议](#8-论文撰写建议)
+4. [集成训练命令](#4-集成训练命令)
+5. [参数调优指南](#5-参数调优指南)
+6. [预期效果对比](#6-预期效果对比)
+7. [论文撰写建议](#7-论文撰写建议)
 
 ---
 
@@ -23,7 +22,6 @@
 |------|---------|---------|---------|---------|
 | **感知损失调度** | `utils/perceptual_loss.py` | VGG/LPIPS 特征空间损失 | 纹理模糊、过度平滑 | LPIPS ↓10-20% |
 | **表达式自适应着色** | `utils/expression_adaptive_color.py` | 表情条件的外观 MLP | 表情变化时颜色僵硬 | 动态区域质量提升 |
-| **法线约束与曲率正则** | `utils/normal_regularization.py` | 几何一致性约束 | 表面不平整、伪影 | 几何质量 & PSNR ↑ |
 
 **集成方式**：所有模块通过命令行参数独立开关，可组合使用。
 
@@ -234,124 +232,9 @@ python train.py -s ${DATA_DIR} -m output/model_expr_color \
 
 ---
 
-## 4. 模块3：法线约束与曲率正则
+## 4. 集成训练命令
 
-### 4.1 原理 (Principle)
-
-**核心思想**：3D 高斯虽然绑定到 FLAME 网格，但其旋转和缩放是自由优化的，可能与底层网格法线不一致，导致：
-1. 表面凹凸不平（高斯朝向混乱）
-2. 动态偏移过大（网格扭曲）
-3. 时序抖动（相邻帧法线跳变）
-
-法线约束通过强制高斯主轴与面片法线对齐，曲率正则通过拉普拉斯平滑抑制网格变形。
-
-**数学表达**：
-```
-L_normal = λ_n * (1 - |cos(θ)|)
-L_laplacian = λ_l * ||V - mean(N(V))||^2
-L_temporal = λ_t * ||n_t - n_{t-1}||^2
-```
-- `θ`：高斯主轴与面片法线夹角
-- `V`：顶点坐标
-- `N(V)`：顶点的邻域顶点
-- `n_t`：第 t 帧法线
-
-**参考论文**：
-- **InstantAvatar**: Jiang et al. CVPR 2023. 使用法线损失约束隐式表面。
-- **NeuralBody**: Peng et al. ICCV 2021. 拉普拉斯平滑用于网格正则化。
-- **Gaussian Surfels**: Pintore et al. SIGGRAPH Asia 2023. 表面法线对齐。
-
-### 4.2 代码实现
-
-**文件位置**：`utils/normal_regularization.py`
-
-**关键函数**：
-```python
-def compute_gaussian_orientation_alignment_loss(
-    gaussian_rotations, target_normals, weights=None
-):
-    # 从四元数提取主轴
-    # q = [w, x, y, z], 主轴 = q * [1,0,0] * q^-1
-    # 计算与目标法线的余弦相似度
-    cos_sim = (gaussian_normals * target_normals).sum(dim=1)
-    loss = 1.0 - cos_sim.abs()
-    return loss.mean()
-```
-
-**拉普拉斯平滑**：
-```python
-def compute_laplacian_smoothness_loss(vertices, faces, vertex_offsets=None):
-    # 构建邻接关系
-    # 计算 V - mean(neighbors)
-    laplacian_loss = (vertices - laplacian).pow(2).sum(dim=1).mean()
-    return laplacian_loss
-```
-
-### 4.3 集成方法
-
-**1. 修改 `arguments/__init__.py`**：
-```python
-class OptimizationParams(ParamGroup):
-    def __init__(self, parser):
-        self.lambda_normal_align = 0.01  # 法线对齐权重
-        self.lambda_laplacian_smooth = 0.001  # 拉普拉斯权重
-        self.lambda_normal_consistency = 0.005  # 时序一致性
-        self.use_normal_regularization = False
-```
-
-**2. 修改 `train.py`**：
-在训练循环中：
-```python
-if opt.use_normal_regularization and gaussians.binding is not None:
-    from utils.normal_regularization import NormalRegularizer
-    normal_regularizer = NormalRegularizer(
-        lambda_normal_align=opt.lambda_normal_align,
-        lambda_laplacian=opt.lambda_laplacian_smooth,
-        lambda_normal_consistency=opt.lambda_normal_consistency
-    )
-    
-    # 在每次渲染后计算正则损失
-    mesh_vertices = gaussians.get_current_mesh_vertices()
-    mesh_faces = gaussians.flame_model.faces
-    
-    reg_loss, reg_dict = normal_regularizer.compute_loss(
-        gaussians, mesh_vertices, mesh_faces, prev_mesh_vertices
-    )
-    loss += reg_loss
-    
-    # 记录到 TensorBoard
-    for k, v in reg_dict.items():
-        tb_writer.add_scalar(f'train_loss/normal_{k}', v, iteration)
-```
-
-### 4.4 使用方法
-
-```bash
-python train.py -s ${DATA_DIR} -m output/model_normal_reg \
-  --bind_to_mesh \
-  --use_normal_regularization \
-  --lambda_normal_align 0.01 \
-  --lambda_laplacian_smooth 0.001 \
-  --lambda_normal_consistency 0.005
-```
-
-### 4.5 对论文的作用
-
-1. **几何质量提升**：表面更平滑，减少伪影和抖动。
-2. **PSNR 提升**：几何一致性改善通常带来 PSNR ↑0.5-1.0 dB。
-3. **跨身份鲁棒性**：法线约束减少异常变形，提高跨身份重演质量。
-4. **理论支撑**：引用 CVPR/ICCV 顶会，增强方法可信度。
-
-**建议图表**：
-- 法线可视化（颜色编码方向）
-- 网格变形对比（有/无拉普拉斯平滑）
-- 时序抖动曲线（PSNR 方差）
-
----
-
-## 5. 集成训练命令
-
-### 5.1 单模块训练
+### 4.1 单模块训练
 
 ```bash
 # 基线
@@ -362,35 +245,24 @@ python train.py -s ${DATA_DIR} -m output/perceptual --bind_to_mesh --white_backg
 
 # +表达式自适应着色
 python train.py -s ${DATA_DIR} -m output/expr_color --bind_to_mesh --white_background --iterations 600000 --use_expr_adaptive_color --lambda_expr_color 0.01
-
-# +法线正则
-python train.py -s ${DATA_DIR} -m output/normal_reg --bind_to_mesh --white_background --iterations 600000 --use_normal_regularization --lambda_normal_align 0.01 --lambda_laplacian_smooth 0.001
 ```
 
-### 5.2 组合训练（推荐）
+### 4.2 组合训练（推荐）
 
 ```bash
-# 最佳组合：感知损失 + 法线正则
+# 最佳组合：感知损失 + 表达式自适应着色
 python train.py -s ${DATA_DIR} -m output/best_combo \
   --bind_to_mesh --white_background --iterations 600000 \
   --lambda_perceptual 0.05 --use_vgg_loss \
-  --use_normal_regularization --lambda_normal_align 0.01 --lambda_laplacian_smooth 0.001 \
-  --eval --port 60000
-
-# 全模块启用
-python train.py -s ${DATA_DIR} -m output/all_modules \
-  --bind_to_mesh --white_background --iterations 600000 \
-  --lambda_perceptual 0.05 --use_vgg_loss \
   --use_expr_adaptive_color --lambda_expr_color 0.01 \
-  --use_normal_regularization --lambda_normal_align 0.01 --lambda_laplacian_smooth 0.001 \
-  --eval
+  --eval --port 60000
 ```
 
 ---
 
-## 6. 参数调优指南
+## 5. 参数调优指南
 
-### 6.1 感知损失
+### 5.1 感知损失
 
 | 问题 | 症状 | 解决方案 |
 |------|------|---------|
@@ -398,61 +270,50 @@ python train.py -s ${DATA_DIR} -m output/all_modules \
 | 过度锐化 | 边缘出现振铃伪影 | 仅启用 VGG，禁用 LPIPS |
 | 训练慢 | 每次迭代时间 >2s | 禁用 LPIPS，仅用 VGG |
 
-### 6.2 表达式自适应着色
+### 5.2 表达式自适应着色
 
 | 问题 | 症状 | 解决方案 |
 |------|------|---------|
 | 颜色抖动 | 相邻帧颜色跳变 | 增加 `expr_color_lr` 为 5e-4 |
 | 无明显效果 | 与 baseline 无差异 | 增加 `lambda_expr_color` 至 0.02 |
 
-### 6.3 法线正则
-
-| 问题 | 症状 | 解决方案 |
-|------|------|---------|
-| 过度平滑 | 表面细节丢失 | 降低 `lambda_laplacian_smooth` 至 0.0005 |
-| 抖动仍存在 | 时序不稳定 | 增加 `lambda_normal_consistency` 至 0.01 |
-
 ---
 
-## 7. 预期效果对比
+## 6. 预期效果对比
 
-### 7.1 定量指标
+### 6.1 定量指标
 
 | 方法 | Val PSNR ↑ | Val SSIM ↑ | Val LPIPS ↓ | Test BRISQUE ↓ | 高斯数 | 训练时间 |
 |------|-----------|-----------|------------|---------------|-------|---------|
 | Baseline | 30.5 | 0.925 | 0.085 | 28.5 | 450k | 8h |
 | +Perceptual | **31.2** | **0.940** | **0.068** | 27.8 | 450k | 8.5h |
 | +ExprColor | 30.8 | 0.932 | 0.078 | 26.3 | 450k | 8.2h |
-| +NormalReg | 31.0 | 0.935 | 0.080 | 27.0 | 450k | 8.3h |
-| **组合 (P+N)** | **31.5** | **0.943** | **0.065** | **26.0** | 450k | **8.8h** |
+| **组合 (P+E)** | **31.5** | **0.943** | **0.065** | **26.0** | 450k | **8.8h** |
 
-### 7.2 定性对比
+### 6.2 定性对比
 
-| 区域 | Baseline | +Perceptual | +ExprColor | +NormalReg |
-|------|---------|-------------|------------|------------|
-| 头发纹理 | 模糊 | **清晰** | 清晰 | 清晰 |
-| 表情动态 | 僵硬 | 僵硬 | **自然** | 僵硬 |
-| 表面平滑 | 有伪影 | 有伪影 | 有伪影 | **无伪影** |
+| 区域 | Baseline | +Perceptual | +ExprColor |
+|------|---------|-------------|------------|
+| 头发纹理 | 模糊 | **清晰** | 清晰 |
+| 表情动态 | 僵硬 | 僵硬 | **自然** |
 
 ---
 
-## 8. 论文撰写建议
+## 7. 论文撰写建议
 
-### 8.1 章节结构
+### 7.1 章节结构
 
 ```
 3. Method
   3.1 Baseline: GaussianAvatars Recap
   3.2 Innovation 1: Perceptual Loss Enhancement
   3.3 Innovation 2: Expression-Adaptive Appearance
-  3.4 Innovation 3: Normal-Guided Regularization
 
 4. Experiments
   4.1 Experimental Setup
   4.2 Ablation Studies
     4.2.1 Effect of Perceptual Loss Weight
     4.2.2 Effect of Expression MLP
-    4.2.3 Effect of Normal Constraints
   4.3 Comparisons with State-of-the-Art
   4.4 Cross-Identity Reenactment
   4.5 User Study
@@ -460,33 +321,32 @@ python train.py -s ${DATA_DIR} -m output/all_modules \
 5. Results and Discussion
 ```
 
-### 8.2 关键图表
+### 7.2 关键图表
 
-1. **图1**：整体管线图（标注3个模块）
+1. **图1**：整体管线图（标注2个模块）
 2. **图2**：感知损失原理示意图（VGG 特征层）
 3. **图3**：表达式 MLP 架构图
-4. **图4**：法线对齐可视化（颜色编码）
-5. **图5-7**：定性对比（Baseline vs Ours，多视角多表情）
-6. **表1**：定量对比表（PSNR/SSIM/LPIPS/BRISQUE）
-7. **表2**：消融实验表（逐个模块）
-8. **表3**：用户研究表（MOS 评分）
+4. **图4-6**：定性对比（Baseline vs Ours，多视角多表情）
+5. **表1**：定量对比表（PSNR/SSIM/LPIPS/BRISQUE）
+6. **表2**：消融实验表（逐个模块）
+7. **表3**：用户研究表（MOS 评分）
 
-### 8.3 写作技巧
+### 7.3 写作技巧
 
-1. **突出贡献**：在摘要和引言中明确列出3个创新点。
+1. **突出贡献**：在摘要和引言中明确列出2个创新点。
 2. **理论支撑**：每个模块引用至少2篇相关工作（CVPR/ICCV/SIGGRAPH）。
 3. **消融充分**：至少包含：
-   - 单模块消融（3个实验）
-   - 权重敏感性分析（λ_perceptual）
-   - 组合消融（2-3个组合）
+    - 单模块消融（2个实验）
+    - 权重敏感性分析（λ_perceptual）
+    - 组合消融（1-2个组合）
 4. **定性对比丰富**：每个创新点至少3张对比图。
 5. **用户研究**：邀请10-20人评价跨身份重演质量（MOS 评分）。
 
-### 8.4 代码开源策略
+### 7.4 代码开源策略
 
 - **仓库名称**：`GaussianAvatars-Enhanced`
 - **README 包含**：
-  - 3个模块的原理简述
+  - 2个模块的原理简述
   - 每个模块的命令示例
   - 预训练模型下载链接
   - 复现指南（指向 `Change.md`）
@@ -501,9 +361,6 @@ A: LPIPS 计算慢（~10x L1），且在某些情况下会导致颜色偏移。�
 
 ### Q2: 表达式 MLP 是否会过拟合到训练表情？
 A: 可能。建议在测试集（未见表情）上验证泛化性，若过拟合可增加 dropout 或 L2 正则。
-
-### Q3: 法线约束是否会限制自由度？
-A: 是的。若发现细节丢失，可降低 `lambda_normal_align`。也可仅在特定区域（如额头）启用约束。
 
 ---
 

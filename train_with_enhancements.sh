@@ -63,35 +63,17 @@ echo "Expression-Adaptive training completed. Results saved to: output/innovatio
 echo ""
 
 # ========================================
-# 4. Innovation 3: 法线约束与曲率正则
+# 4. 最佳组合：感知损失 + 表达式自适应着色
 # ========================================
-echo "[4/5] Training with Normal Regularization..."
-python train.py \
-  -s ${DATA_DIR} \
-  -m output/innovation3_normal_reg_${SUBJECT} \
-  ${COMMON_ARGS} \
-  --use_normal_regularization \
-  --lambda_normal_align 0.01 \
-  --lambda_laplacian_smooth 0.001 \
-  --lambda_normal_consistency 0.005
-
-echo ""
-echo "Normal Regularization training completed. Results saved to: output/innovation3_normal_reg_${SUBJECT}"
-echo ""
-
-# ========================================
-# 5. 最佳组合：感知损失 + 法线正则
-# ========================================
-echo "[5/5] Training with Best Combination (Perceptual + Normal)..."
+echo "[4/4] Training with Best Combination (Perceptual + ExprColor)..."
 python train.py \
   -s ${DATA_DIR} \
   -m output/best_combination_${SUBJECT} \
   ${COMMON_ARGS} \
   --lambda_perceptual 0.05 \
   --use_vgg_loss \
-  --use_normal_regularization \
-  --lambda_normal_align 0.01 \
-  --lambda_laplacian_smooth 0.001
+  --use_expr_adaptive_color \
+  --lambda_expr_color 0.01
 
 echo ""
 echo "Best Combination training completed. Results saved to: output/best_combination_${SUBJECT}"
@@ -109,7 +91,6 @@ MODELS=(
   "baseline_${SUBJECT}"
   "innovation1_perceptual_${SUBJECT}"
   "innovation2_expr_color_${SUBJECT}"
-  "innovation3_normal_reg_${SUBJECT}"
   "best_combination_${SUBJECT}"
 )
 
@@ -135,7 +116,6 @@ echo "Results saved in output/ directory:"
 echo "  - Baseline: output/baseline_${SUBJECT}"
 echo "  - Innovation 1 (Perceptual): output/innovation1_perceptual_${SUBJECT}"
 echo "  - Innovation 2 (ExprColor): output/innovation2_expr_color_${SUBJECT}"
-echo "  - Innovation 3 (NormalReg): output/innovation3_normal_reg_${SUBJECT}"
 echo "  - Best Combination: output/best_combination_${SUBJECT}"
 echo ""
 echo "To compare results, check the following files in each model directory:"
