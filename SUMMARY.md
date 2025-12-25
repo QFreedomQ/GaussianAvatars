@@ -2,7 +2,7 @@
 
 ## 已实现的增强模块
 
-本次工作为 GaussianAvatars 项目添加了 **3 个进阶增强模块**，所有模块代码已集成到源码库中，并提供详细文档说明。
+本次工作为 GaussianAvatars 项目添加了 **2 个进阶增强模块**，所有模块代码已集成到源码库中，并提供详细文档说明。
 
 ---
 
@@ -10,40 +10,35 @@
 
 ### 核心模块文件
 1. **`utils/expression_adaptive_color.py`** (173 行)
-   - 表达式自适应着色网络
-   - 基于 FLAME 表情参数生成颜色偏移
-
-2. **`utils/normal_regularization.py`** (221 行)
-   - 法线约束与曲率正则
-   - 高斯法线对齐 + 拉普拉斯平滑
+    - 表达式自适应着色网络
+    - 基于 FLAME 表情参数生成颜色偏移
 
 ### 文档文件
-3. **`New.md`** (174 行)
-   - 原论文方法重构与强化方案（中文）
-   - 完整实验工作流与命令速查
+2. **`New.md`** (174 行)
+    - 原论文方法重构与强化方案（中文）
+    - 完整实验工作流与命令速查
 
-4. **`Change.md`** (512 行)
-   - 三大增强模块详解（中文）
-   - 原理、实现、使用方法、参数调优、论文撰写建议
+3. **`Change.md`** (512 行)
+    - 增强模块详解（中文）
+    - 原理、实现、使用方法、参数调优、论文撰写建议
 
-5. **`train_with_enhancements.sh`** (120 行)
-   - 一键训练所有模块的 Bash 脚本
-   - 自动评估和对比
+4. **`train_with_enhancements.sh`** (120 行)
+    - 一键训练所有模块的 Bash 脚本
+    - 自动评估和对比
 
 ### 修改的现有文件
-6. **`arguments/__init__.py`**
-   - 新增 13 个命令行参数（覆盖 3 个模块）
-   - 保持向后兼容（默认禁用所有新模块）
+5. **`arguments/__init__.py`**
+    - 新增命令行参数（覆盖 2 个模块）
+    - 保持向后兼容（默认禁用所有新模块）
 
 ---
 
-## 🎯 三大增强模块概览
+## 🎯 两大增强模块概览
 
 | # | 模块名称 | 主要功能 | 针对问题 | 预期提升 | 参考论文 |
 |---|---------|---------|---------|---------|---------|
 | **1** | **感知损失调度** | VGG/LPIPS 特征损失 | 纹理模糊、过度平滑 | LPIPS ↓10-20% | ECCV'16, CVPR'18 |
 | **2** | **表达式自适应着色** | 表情条件的外观 MLP | 表情变化时颜色僵硬 | 动态区域质量↑ | CVPR'22, CVPR'23 |
-| **3** | **法线约束与曲率正则** | 几何一致性约束 | 表面不平整、伪影 | PSNR ↑0.5-1.0 dB | ICCV'21, CVPR'23 |
 
 ---
 
@@ -77,17 +72,6 @@ python train.py \
   --lambda_expr_color 0.01
 ```
 
-#### 3. 法线约束与曲率正则
-```bash
-python train.py \
-  -s ${DATA_DIR} \
-  -m output/normal_reg_model \
-  --bind_to_mesh --white_background --eval \
-  --use_normal_regularization \
-  --lambda_normal_align 0.01 \
-  --lambda_laplacian_smooth 0.001
-```
-
 ### 最佳组合（推荐用于论文）
 ```bash
 python train.py \
@@ -95,7 +79,7 @@ python train.py \
   -m output/best_combo \
   --bind_to_mesh --white_background --eval --iterations 600000 \
   --lambda_perceptual 0.05 --use_vgg_loss \
-  --use_normal_regularization --lambda_normal_align 0.01 --lambda_laplacian_smooth 0.001
+  --use_expr_adaptive_color --lambda_expr_color 0.01
 ```
 
 ### 一键运行所有模块（含评估）
@@ -115,8 +99,7 @@ chmod +x train_with_enhancements.sh
 | Baseline | 30.5 | 0.925 | 0.085 | 450k | 8h |
 | +Perceptual | **31.2** | **0.940** | **0.068** | 450k | 8.5h |
 | +ExprColor | 30.8 | 0.932 | 0.078 | 450k | 8.2h |
-| +NormalReg | 31.0 | 0.935 | 0.080 | 450k | 8.3h |
-| **Best Combo (P+N)** | **31.5** | **0.943** | **0.065** | 450k | **8.8h** |
+| **Best Combo (P+E)** | **31.5** | **0.943** | **0.065** | 450k | **8.8h** |
 
 ---
 
@@ -133,16 +116,16 @@ chmod +x train_with_enhancements.sh
 │
 ├── Change.md                       # 增强模块详解（中文）
 │   ├── 1. 增强模块总览
-│   ├── 2-4. 三大模块详细说明
+│   ├── 2-3. 两大模块详细说明
 │   │   ├── 原理 (Principle)
 │   │   ├── 代码实现 (Implementation)
 │   │   ├── 集成方法 (Integration)
 │   │   ├── 使用方法 (Usage)
 │   │   └── 对论文的作用 (Contribution)
-│   ├── 5. 集成训练命令
-│   ├── 6. 参数调优指南
-│   ├── 7. 预期效果对比
-│   └── 8. 论文撰写建议
+│   ├── 4. 集成训练命令
+│   ├── 5. 参数调优指南
+│   ├── 6. 预期效果对比
+│   └── 7. 论文撰写建议
 │
 ├── All.md                          # 原有的实验指南（已存在）
 │
@@ -167,14 +150,6 @@ chmod +x train_with_enhancements.sh
 | `--lambda_expr_color` | 0.01 | 表情颜色权重 |
 | `--expr_color_lr` | 1e-4 | MLP 学习率 |
 
-### 法线约束（Innovation 3）
-| 参数 | 默认值 | 说明 |
-|------|--------|------|
-| `--use_normal_regularization` | False | 启用法线正则 |
-| `--lambda_normal_align` | 0.01 | 法线对齐权重 |
-| `--lambda_laplacian_smooth` | 0.001 | 拉普拉斯平滑权重 |
-| `--lambda_normal_consistency` | 0.005 | 时序一致性权重 |
-
 ---
 
 ## ✅ 代码质量保证
@@ -195,7 +170,6 @@ chmod +x train_with_enhancements.sh
   3.1 Baseline Recap
   3.2 Innovation 1: Perceptual Loss Enhancement
   3.3 Innovation 2: Expression-Adaptive Appearance
-  3.4 Innovation 3: Normal-Guided Regularization
 
 4. Experiments
   4.1 Setup & Datasets
@@ -206,8 +180,8 @@ chmod +x train_with_enhancements.sh
 ```
 
 ### 关键图表
-1. **图 1-4**：各模块原理示意图
-2. **图 5-7**：定性对比（多视角、多表情）
+1. **图 1-3**：各模块原理示意图
+2. **图 4-6**：定性对比（多视角、多表情）
 3. **表 1**：定量对比（PSNR/SSIM/LPIPS/BRISQUE）
 4. **表 2**：消融实验（逐个模块）
 5. **表 3**：组合消融（不同模块组合）
@@ -227,9 +201,6 @@ A: 降低 `--lambda_perceptual` 至 0.02-0.03，或仅启用 VGG，禁用 LPIPS�
 
 **Q: 表达式 MLP 训练不稳定？**
 A: 增加 `--expr_color_lr` 为 5e-4，或降低 `--lambda_expr_color` 至 0.005。
-
-**Q: 法线约束导致细节丢失？**
-A: 降低 `--lambda_normal_align` 至 0.005，保留纹理自由度。
 
 ---
 

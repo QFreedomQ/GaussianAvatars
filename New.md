@@ -171,7 +171,6 @@ from utils.image_utils import psnr  # 可重用同目录
 在确认 baseline 完整可复现后，可按下述方向迭代（保持数据/评估一致）：
 1. **感知损失调度**（已提供）：`--lambda_perceptual`。可探索 `0.02~0.1`，或仅启用 `LPIPS`。
 2. **表达式自适应着色**：参考 *Neural Head Avatars (CVPR 2023)*，可在 `scene/flame_gaussian_model.py` 中为不同 FLAME 三角面添加表达式条件颜色。
-3. **法线约束/曲率正则**：参考 *InstantAvatar (CVPR 2023)*，可在 `train.py` 中新增额外损失项，调用 `mesh_renderer` 生成法线 supervision。
 
 > 每个新模块务必在 `New.md` 或 `All.md` 旁另开小节，记录新增参数与代码位置，保持论文复现实验与创新实验之间的清晰对照。
 

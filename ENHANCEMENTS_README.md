@@ -1,6 +1,6 @@
 # GaussianAvatars 增强模块使用指南
 
-本仓库在原始 GaussianAvatars 基础上新增了 **3 个进阶增强模块**，用于提升头部重建的质量和一致性。
+本仓库在原始 GaussianAvatars 基础上新增了 **2 个进阶增强模块**，用于提升头部重建的质量和一致性。
 
 ---
 
@@ -10,7 +10,6 @@
 |---------|------|------|---------|
 | **1** | 感知损失增强 | VGG/LPIPS 特征损失 | `--lambda_perceptual 0.05 --use_vgg_loss` |
 | **2** | 表达式自适应着色 | 表情条件外观 MLP | `--use_expr_adaptive_color --lambda_expr_color 0.01` |
-| **3** | 法线约束与曲率正则 | 几何一致性约束 | `--use_normal_regularization --lambda_normal_align 0.01` |
 
 ---
 
@@ -20,14 +19,13 @@
 GaussianAvatars/
 ├── utils/
 │   ├── expression_adaptive_color.py    # 模块 2：表达式自适应着色
-│   ├── normal_regularization.py        # 模块 3：法线约束与曲率正则
 │   └── perceptual_loss.py              # 模块 1：感知损失（已存在）
 │
-├── arguments/__init__.py               # 新增 13 个参数
+├── arguments/__init__.py               # 新增命令行参数
 ├── train.py                            # 集成感知损失（已完成）
 │
 ├── New.md                              # 原论文重构方案（中文）
-├── Change.md                           # 增强模块详解（中文，512 行）
+├── Change.md                           # 增强模块详解（中文）
 ├── SUMMARY.md                          # 实现总结
 ├── train_with_enhancements.sh         # 一键训练脚本
 └── ENHANCEMENTS_README.md             # 本文档
@@ -44,7 +42,7 @@ GaussianAvatars/
 export SUBJECT=306
 export DATA_DIR="data/UNION10_${SUBJECT}_EMO1234EXP234589_v16_DS2-0.5x_lmkSTAR_teethV3_SMOOTH_offsetS_whiteBg_maskBelowLine"
 
-# 2. 运行一键训练脚本（包含 Baseline + 3 个模块 + 最佳组合）
+# 2. 运行一键训练脚本（包含 Baseline + 2 个模块 + 最佳组合）
 chmod +x train_with_enhancements.sh
 ./train_with_enhancements.sh
 ```
@@ -53,8 +51,7 @@ chmod +x train_with_enhancements.sh
 1. Baseline（无增强）
 2. Innovation 1（感知损失）
 3. Innovation 2（表达式自适应）
-4. Innovation 3（法线正则）
-5. Best Combination（1+3 组合）
+4. Best Combination（1+2 组合）
 
 所有结果保存在 `output/` 目录，自动生成 JSON 指标和 MP4 视频。
 
@@ -95,20 +92,6 @@ python train.py \
 
 **预期效果**：动态表情下（笑、哭、皱眉）颜色一致性改善。
 
-#### 模块 3：法线约束与曲率正则
-```bash
-python train.py \
-  -s ${DATA_DIR} \
-  -m output/normal_regularization \
-  --bind_to_mesh --white_background --eval --iterations 600000 \
-  --use_normal_regularization \
-  --lambda_normal_align 0.01 \
-  --lambda_laplacian_smooth 0.001 \
-  --lambda_normal_consistency 0.005
-```
-
-**预期效果**：表面更平滑，减少伪影和时序抖动，PSNR ↑0.5-1.0 dB。
-
 ---
 
 ### 方法 3：最佳组合（用于论文）
@@ -119,7 +102,7 @@ python train.py \
   -m output/best_combination \
   --bind_to_mesh --white_background --eval --iterations 600000 \
   --lambda_perceptual 0.05 --use_vgg_loss \
-  --use_normal_regularization --lambda_normal_align 0.01 --lambda_laplacian_smooth 0.001
+  --use_expr_adaptive_color --lambda_expr_color 0.01
 ```
 
 **预期效果**：综合提升，LPIPS ↓20%，PSNR ↑1 dB。
@@ -161,7 +144,7 @@ ffmpeg -i output/baseline/val/ours_600000/renders.mp4 \
 |  | - 训练流程、评估管线 | |
 |  | - 可视化方法、命令速查 | |
 | **Change.md** | 增强模块详解（中文）| 512 行 |
-|  | - 3 个模块的原理、实现、使用 | |
+|  | - 2 个模块的原理、实现、使用 | |
 |  | - 参数调优指南 | |
 |  | - 预期效果对比 | |
 |  | - 论文撰写建议 | |
@@ -190,11 +173,6 @@ ffmpeg -i output/baseline/val/ours_600000/renders.mp4 \
 - 若无明显效果，增加到 0.02
 - 若颜色抖动，降低到 0.005 或增加 `expr_color_lr` 到 5e-4
 
-### 法线对齐权重
-- 默认 `lambda_normal_align=0.01` 适用于中等强度约束
-- 若细节丢失，降低到 0.005
-- 若仍有伪影，增加到 0.02
-
 ---
 
 ## ❓ 常见问题
@@ -203,16 +181,15 @@ ffmpeg -i output/baseline/val/ours_600000/renders.mp4 \
 A: 不传对应的 `--use_xxx` 参数即可（默认全部禁用）。
 
 ### Q2: 可以组合多个模块吗？
-A: 可以！推荐组合：感知损失 + 法线正则。
+A: 可以！推荐组合：感知损失 + 表达式自适应着色。
 
 ### Q3: 训练时间会增加多少？
 A: - 感知损失：+5-10%
-   - 其它模块：+2-5%
+    - 表达式自适应着色：+2-5%
 
 ### Q4: 如何验证模块生效？
 A: 检查 TensorBoard：
-   - 感知损失：`train_loss_patches/perceptual_loss` 曲线应下降
-   - 法线正则：`train_loss/normal_align` 曲线应下降
+    - 感知损失：`train_loss_patches/perceptual_loss` 曲线应下降
 
 ### Q5: 论文中应该报告哪些指标？
 A: - **必须**：PSNR、SSIM、LPIPS（val + test）
@@ -230,10 +207,6 @@ A: - **必须**：PSNR、SSIM、LPIPS（val + test）
 ### 模块 2：表达式自适应
 - Grassal et al. "Neural Head Avatars from Monocular RGB Videos." CVPR 2023.
 - Wang et al. "FaceVerse: a Fine-grained and Detail-controllable 3D Face Morphable Model." CVPR 2022.
-
-### 模块 3：法线正则
-- Jiang et al. "InstantAvatar: Learning Avatars from Monocular Video in 60 Seconds." CVPR 2023.
-- Peng et al. "Neural Body: Implicit Neural Representations with Structured Latent Codes." ICCV 2021.
 
 ---
 

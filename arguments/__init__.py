@@ -120,13 +120,6 @@ class OptimizationParams(ParamGroup):
         self.lambda_expr_color = 0.01  # Expression color weight
         self.expr_color_lr = 1e-4  # Expression MLP learning rate
         self.expr_color_hidden_dim = 128  # Hidden dimension of expression MLP
-        
-        # Innovation 3: Normal Constraint and Curvature Regularization
-        # Source: InstantAvatar (CVPR 2023), NeuralBody (ICCV 2021)
-        self.use_normal_regularization = False  # Enable normal and curvature regularization
-        self.lambda_normal_align = 0.01  # Normal alignment weight
-        self.lambda_laplacian_smooth = 0.001  # Laplacian smoothness weight (renamed from lambda_laplacian)
-        self.lambda_normal_consistency = 0.005  # Temporal normal consistency weight
 
         super().__init__(parser, "Optimization Parameters")
 
