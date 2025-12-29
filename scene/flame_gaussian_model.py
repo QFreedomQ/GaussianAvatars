@@ -19,13 +19,21 @@ from roma import rotmat_to_unitquat, quat_xyzw_to_wxyz
 
 
 class FlameGaussianModel(GaussianModel):
-    def __init__(self, sh_degree : int, disable_flame_static_offset=False, not_finetune_flame_params=False, n_shape=300, n_expr=100):
+    def __init__(self, sh_degree : int, disable_flame_static_offset=False, not_finetune_flame_params=False, n_shape=300, n_expr=100, use_neural_deformation=False, use_uv_texture=False):
         super().__init__(sh_degree)
 
         self.disable_flame_static_offset = disable_flame_static_offset
         self.not_finetune_flame_params = not_finetune_flame_params
         self.n_shape = n_shape
         self.n_expr = n_expr
+        self.use_neural_deformation = use_neural_deformation
+        self.use_uv_texture = use_uv_texture
+
+        # Log which modules are enabled
+        print(f"[FlameGaussianModel] Initializing with:")
+        print(f"  - Neural Deformation: {'ENABLED' if use_neural_deformation else 'DISABLED'}")
+        print(f"  - UV Texture: {'ENABLED' if use_uv_texture else 'DISABLED'}")
+        print(f"  - Perceptual Loss: {'ENABLED' if hasattr(self, 'perceptual_loss_enabled') else 'DISABLED'}")
 
         self.flame_model = FlameHead(
             n_shape, 
@@ -35,6 +43,30 @@ class FlameGaussianModel(GaussianModel):
         self.flame_param = None
         self.flame_param_orig = None
         self.num_flame_verts = self.flame_model.v_template.shape[0]
+
+        # Initialize neural deformation field if enabled
+        if use_neural_deformation:
+            from .neural_deformation_field import NeuralDeformationField
+            self.neural_deformation_field = NeuralDeformationField(
+                n_expr=n_expr,
+                n_verts=self.num_flame_verts
+            ).cuda()
+            print(f"[FlameGaussianModel] Neural Deformation Field initialized (MLP: 3 layers, 256 units)")
+        else:
+            self.neural_deformation_field = None
+
+        # Initialize UV neural texture if enabled
+        if use_uv_texture:
+            from .uv_neural_texture import UVNeuralTexture
+            self.uv_neural_texture = UVNeuralTexture(texture_size=1024).cuda()
+            # Set UV coordinates from FLAME model
+            self.uv_neural_texture.set_uv_coordinates(
+                self.flame_model.face_uvcoords,
+                self.flame_model.textures_idx
+            )
+            print(f"[FlameGaussianModel] UV Neural Texture initialized (1024x1024 RGB texture)")
+        else:
+            self.uv_neural_texture = None
 
         # binding is initialized once the mesh topology is known
         if self.binding is None:
@@ -172,8 +204,45 @@ class FlameGaussianModel(GaussianModel):
         diff = diff.sum(dim=-1, keepdim=True)
         return diff.mean()
     
+    def log_enabled_modules(self):
+        """Log which innovation modules are enabled"""
+        print("\n" + "="*60)
+        print("GAUSSIAN AVATARS - ENABLED INNOVATIONS")
+        print("="*60)
+        
+        # Check neural deformation
+        if self.use_neural_deformation and self.neural_deformation_field is not None:
+            print("✅ Innovation 2: Generalized Neural Deformation Field")
+            print("   - Replaces lookup table with learned MLP")
+            print("   - Enables cross-identity motion transfer")
+            print("   - Improves generalization to unseen expressions")
+        else:
+            print("❌ Innovation 2: Generalized Neural Deformation Field (DISABLED)")
+        
+        # Check UV texture
+        if self.use_uv_texture and self.uv_neural_texture is not None:
+            print("✅ Innovation 3: UV-Based Neural Texture Field")
+            print("   - Replaces per-point SH with learned 2D texture")
+            print("   - Provides spatial coherence and editability")
+            print("   - Reduces parameters and eliminates noise")
+        else:
+            print("❌ Innovation 3: UV-Based Neural Texture Field (DISABLED)")
+        
+        # Check perceptual loss (this would be set in training_args)
+        if hasattr(self, 'perceptual_loss_enabled') and self.perceptual_loss_enabled:
+            print("✅ Innovation 1: Perceptual Loss Enhancement")
+            print("   - Adds VGG/LPIPS perceptual metrics")
+            print("   - Improves visual quality and reduces artifacts")
+        else:
+            print("❌ Innovation 1: Perceptual Loss Enhancement (DISABLED)")
+        
+        print("="*60 + "\n")
+    
     def training_setup(self, training_args):
         super().training_setup(training_args)
+
+        # Log enabled modules at training start
+        self.log_enabled_modules()
 
         if self.not_finetune_flame_params:
             return
