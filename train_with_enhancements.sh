@@ -20,7 +20,7 @@ echo ""
 # ========================================
 # 1. Baseline (原始方法)
 # ========================================
-echo "[1/5] Training Baseline..."
+echo "[1/2] Training Baseline..."
 python train.py \
   -s ${DATA_DIR} \
   -m output/baseline_${SUBJECT} \
@@ -32,51 +32,18 @@ echo "Baseline training completed. Results saved to: output/baseline_${SUBJECT}"
 echo ""
 
 # ========================================
-# 2. Innovation 1: 感知损失增强
+# 2. Perceptual Loss Enhancement (感知损失增强)
 # ========================================
-echo "[2/5] Training with Perceptual Loss Enhancement..."
+echo "[2/2] Training with Perceptual Loss Enhancement..."
 python train.py \
   -s ${DATA_DIR} \
-  -m output/innovation1_perceptual_${SUBJECT} \
+  -m output/perceptual_${SUBJECT} \
   ${COMMON_ARGS} \
   --lambda_perceptual 0.05 \
   --use_vgg_loss
 
 echo ""
-echo "Perceptual Loss training completed. Results saved to: output/innovation1_perceptual_${SUBJECT}"
-echo ""
-
-# ========================================
-# 3. Innovation 2: 表达式自适应着色
-# ========================================
-echo "[3/5] Training with Expression-Adaptive Appearance..."
-python train.py \
-  -s ${DATA_DIR} \
-  -m output/innovation2_expr_color_${SUBJECT} \
-  ${COMMON_ARGS} \
-  --use_expr_adaptive_color \
-  --lambda_expr_color 0.01 \
-  --expr_color_lr 1e-4
-
-echo ""
-echo "Expression-Adaptive training completed. Results saved to: output/innovation2_expr_color_${SUBJECT}"
-echo ""
-
-# ========================================
-# 4. 最佳组合：感知损失 + 表达式自适应着色
-# ========================================
-echo "[4/4] Training with Best Combination (Perceptual + ExprColor)..."
-python train.py \
-  -s ${DATA_DIR} \
-  -m output/best_combination_${SUBJECT} \
-  ${COMMON_ARGS} \
-  --lambda_perceptual 0.05 \
-  --use_vgg_loss \
-  --use_expr_adaptive_color \
-  --lambda_expr_color 0.01
-
-echo ""
-echo "Best Combination training completed. Results saved to: output/best_combination_${SUBJECT}"
+echo "Perceptual Loss training completed. Results saved to: output/perceptual_${SUBJECT}"
 echo ""
 
 # ========================================
@@ -89,9 +56,7 @@ echo "========================================"
 # 渲染并评估每个模型
 MODELS=(
   "baseline_${SUBJECT}"
-  "innovation1_perceptual_${SUBJECT}"
-  "innovation2_expr_color_${SUBJECT}"
-  "best_combination_${SUBJECT}"
+  "perceptual_${SUBJECT}"
 )
 
 for MODEL in "${MODELS[@]}"; do
@@ -114,9 +79,7 @@ echo "========================================"
 echo ""
 echo "Results saved in output/ directory:"
 echo "  - Baseline: output/baseline_${SUBJECT}"
-echo "  - Innovation 1 (Perceptual): output/innovation1_perceptual_${SUBJECT}"
-echo "  - Innovation 2 (ExprColor): output/innovation2_expr_color_${SUBJECT}"
-echo "  - Best Combination: output/best_combination_${SUBJECT}"
+echo "  - Perceptual Loss: output/perceptual_${SUBJECT}"
 echo ""
 echo "To compare results, check the following files in each model directory:"
 echo "  - val_results.json: Validation metrics (PSNR, SSIM, LPIPS)"

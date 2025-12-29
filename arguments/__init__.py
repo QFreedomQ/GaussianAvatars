@@ -113,13 +113,6 @@ class OptimizationParams(ParamGroup):
         self.lambda_perceptual = 0.0  # Weight for VGG-based perceptual loss (default: disabled)
         self.use_vgg_loss = True  # Enable VGG perceptual loss (effective when perceptual weight > 0)
         self.use_lpips_loss = False  # LPIPS is slower, disabled by default
-        
-        # Innovation 2: Expression-Adaptive Appearance
-        # Source: Neural Head Avatars (CVPR 2023), FaceVerse (CVPR 2022)
-        self.use_expr_adaptive_color = False  # Enable expression-conditional color MLP
-        self.lambda_expr_color = 0.01  # Expression color weight
-        self.expr_color_lr = 1e-4  # Expression MLP learning rate
-        self.expr_color_hidden_dim = 128  # Hidden dimension of expression MLP
 
         super().__init__(parser, "Optimization Parameters")
 

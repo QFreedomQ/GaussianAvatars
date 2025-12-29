@@ -2,43 +2,42 @@
 
 ## 已实现的增强模块
 
-本次工作为 GaussianAvatars 项目添加了 **2 个进阶增强模块**，所有模块代码已集成到源码库中，并提供详细文档说明。
+本次工作为 GaussianAvatars 项目添加了 **感知损失增强模块**，所有代码已集成到源码库中，并提供详细文档说明。
 
 ---
 
 ## 📁 新增文件清单
 
 ### 核心模块文件
-1. **`utils/expression_adaptive_color.py`** (173 行)
-    - 表达式自适应着色网络
-    - 基于 FLAME 表情参数生成颜色偏移
+1. **`utils/perceptual_loss.py`**
+    - 感知损失网络（VGG/LPIPS）
+    - 用于提升纹理质量和细节
 
 ### 文档文件
 2. **`New.md`** (174 行)
     - 原论文方法重构与强化方案（中文）
     - 完整实验工作流与命令速查
 
-3. **`Change.md`** (512 行)
+3. **`Change.md`** (237 行)
     - 增强模块详解（中文）
     - 原理、实现、使用方法、参数调优、论文撰写建议
 
-4. **`train_with_enhancements.sh`** (120 行)
-    - 一键训练所有模块的 Bash 脚本
+4. **`train_with_enhancements.sh`** (76 行)
+    - 一键训练脚本（Baseline + 感知损失）
     - 自动评估和对比
 
 ### 修改的现有文件
 5. **`arguments/__init__.py`**
-    - 新增命令行参数（覆盖 2 个模块）
-    - 保持向后兼容（默认禁用所有新模块）
+    - 新增感知损失命令行参数
+    - 保持向后兼容（默认禁用）
 
 ---
 
-## 🎯 两大增强模块概览
+## 🎯 增强模块概览
 
 | # | 模块名称 | 主要功能 | 针对问题 | 预期提升 | 参考论文 |
 |---|---------|---------|---------|---------|---------|
-| **1** | **感知损失调度** | VGG/LPIPS 特征损失 | 纹理模糊、过度平滑 | LPIPS ↓10-20% | ECCV'16, CVPR'18 |
-| **2** | **表达式自适应着色** | 表情条件的外观 MLP | 表情变化时颜色僵硬 | 动态区域质量↑ | CVPR'22, CVPR'23 |
+| **1** | **感知损失增强** | VGG/LPIPS 特征损失 | 纹理模糊、过度平滑 | LPIPS ↓10-20% | ECCV'16, CVPR'18 |
 
 ---
 
@@ -50,9 +49,9 @@
 conda activate gaussian-avatars
 ```
 
-### 单模块训练示例
+### 训练示例
 
-#### 1. 感知损失增强（推荐首选）
+#### 感知损失增强
 ```bash
 python train.py \
   -s ${DATA_DIR} \
@@ -62,27 +61,7 @@ python train.py \
   --use_vgg_loss
 ```
 
-#### 2. 表达式自适应着色
-```bash
-python train.py \
-  -s ${DATA_DIR} \
-  -m output/expr_color_model \
-  --bind_to_mesh --white_background --eval \
-  --use_expr_adaptive_color \
-  --lambda_expr_color 0.01
-```
-
-### 最佳组合（推荐用于论文）
-```bash
-python train.py \
-  -s ${DATA_DIR} \
-  -m output/best_combo \
-  --bind_to_mesh --white_background --eval --iterations 600000 \
-  --lambda_perceptual 0.05 --use_vgg_loss \
-  --use_expr_adaptive_color --lambda_expr_color 0.01
-```
-
-### 一键运行所有模块（含评估）
+### 一键运行（含评估）
 ```bash
 chmod +x train_with_enhancements.sh
 ./train_with_enhancements.sh
@@ -98,8 +77,6 @@ chmod +x train_with_enhancements.sh
 |------|-----------|-----------|------------|-------|---------|
 | Baseline | 30.5 | 0.925 | 0.085 | 450k | 8h |
 | +Perceptual | **31.2** | **0.940** | **0.068** | 450k | 8.5h |
-| +ExprColor | 30.8 | 0.932 | 0.078 | 450k | 8.2h |
-| **Best Combo (P+E)** | **31.5** | **0.943** | **0.065** | 450k | **8.8h** |
 
 ---
 
@@ -116,16 +93,15 @@ chmod +x train_with_enhancements.sh
 │
 ├── Change.md                       # 增强模块详解（中文）
 │   ├── 1. 增强模块总览
-│   ├── 2-3. 两大模块详细说明
+│   ├── 2. 感知损失增强详细说明
 │   │   ├── 原理 (Principle)
 │   │   ├── 代码实现 (Implementation)
-│   │   ├── 集成方法 (Integration)
 │   │   ├── 使用方法 (Usage)
 │   │   └── 对论文的作用 (Contribution)
-│   ├── 4. 集成训练命令
-│   ├── 5. 参数调优指南
-│   ├── 6. 预期效果对比
-│   └── 7. 论文撰写建议
+│   ├── 3. 集成训练命令
+│   ├── 4. 参数调优指南
+│   ├── 5. 预期效果对比
+│   └── 6. 论文撰写建议
 │
 ├── All.md                          # 原有的实验指南（已存在）
 │
@@ -142,13 +118,6 @@ chmod +x train_with_enhancements.sh
 | `--lambda_perceptual` | 0.0 | 感知损失权重（0 = 禁用）|
 | `--use_vgg_loss` | True | 启用 VGG 感知损失 |
 | `--use_lpips_loss` | False | 启用 LPIPS（更慢）|
-
-### 表达式自适应着色（Innovation 2）
-| 参数 | 默认值 | 说明 |
-|------|--------|------|
-| `--use_expr_adaptive_color` | False | 启用表情条件外观 |
-| `--lambda_expr_color` | 0.01 | 表情颜色权重 |
-| `--expr_color_lr` | 1e-4 | MLP 学习率 |
 
 ---
 
@@ -168,24 +137,22 @@ chmod +x train_with_enhancements.sh
 ```
 3. Method
   3.1 Baseline Recap
-  3.2 Innovation 1: Perceptual Loss Enhancement
-  3.3 Innovation 2: Expression-Adaptive Appearance
+  3.2 Innovation: Perceptual Loss Enhancement
 
 4. Experiments
   4.1 Setup & Datasets
-  4.2 Ablation Studies (每个模块单独消融)
+  4.2 Ablation Studies (权重敏感性分析)
   4.3 Comparison with State-of-the-Art
   4.4 Cross-Identity Reenactment
   4.5 User Study (MOS)
 ```
 
 ### 关键图表
-1. **图 1-3**：各模块原理示意图
-2. **图 4-6**：定性对比（多视角、多表情）
+1. **图 1-2**：模块原理示意图
+2. **图 3-5**：定性对比（多视角、多表情）
 3. **表 1**：定量对比（PSNR/SSIM/LPIPS/BRISQUE）
-4. **表 2**：消融实验（逐个模块）
-5. **表 3**：组合消融（不同模块组合）
-6. **表 4**：用户研究（MOS 评分）
+4. **表 2**：消融实验（不同权重）
+5. **表 3**：用户研究（MOS 评分）
 
 ### 引用策略
 每个模块至少引用 2 篇顶会论文（CVPR/ICCV/ECCV/SIGGRAPH），增强方法可信度。
@@ -198,9 +165,6 @@ chmod +x train_with_enhancements.sh
 
 **Q: 感知损失导致颜色偏移？**
 A: 降低 `--lambda_perceptual` 至 0.02-0.03，或仅启用 VGG，禁用 LPIPS。
-
-**Q: 表达式 MLP 训练不稳定？**
-A: 增加 `--expr_color_lr` 为 5e-4，或降低 `--lambda_expr_color` 至 0.005。
 
 ---
 
@@ -225,11 +189,11 @@ A: 增加 `--expr_color_lr` 为 5e-4，或降低 `--lambda_expr_color` 至 0.005
 
 ## 🎓 下一步工作
 
-1. **运行实验**：在实际数据集（如 UNION10_306）上训练所有模块
+1. **运行实验**：在实际数据集（如 UNION10_306）上训练模块
 2. **收集指标**：记录 PSNR、SSIM、LPIPS、BRISQUE、训练时间
 3. **生成对比图**：使用 `render.py` 和 `ffmpeg` 生成定性对比
 4. **用户研究**：邀请 10-20 人进行 MOS 评分
-5. **撰写论文**：根据 Change.md 第 8 节的建议组织内容
+5. **撰写论文**：根据 Change.md 第 6 节的建议组织内容
 6. **开源代码**：发布到 GitHub，配合论文提交
 
 ---
@@ -240,7 +204,7 @@ A: 增加 `--expr_color_lr` 为 5e-4，或降低 `--lambda_expr_color` 至 0.005
 **维护者**: GaussianAvatars Enhancement Team
 
 **文件说明**:
-- 本文档总结了所有实现的增强模块
+- 本文档总结了实现的感知损失增强模块
 - 详细文档见 `New.md` 和 `Change.md`
 - 代码已集成到 `utils/` 和 `arguments/`
 - 使用 `train_with_enhancements.sh` 快速开始实验

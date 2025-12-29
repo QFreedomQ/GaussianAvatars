@@ -1,6 +1,6 @@
 # GaussianAvatars 增强模块使用指南
 
-本仓库在原始 GaussianAvatars 基础上新增了 **2 个进阶增强模块**，用于提升头部重建的质量和一致性。
+本仓库在原始 GaussianAvatars 基础上新增了 **感知损失增强模块**，用于提升头部重建的质量和纹理细节。
 
 ---
 
@@ -9,7 +9,6 @@
 | 模块编号 | 名称 | 功能 | 启用参数 |
 |---------|------|------|---------|
 | **1** | 感知损失增强 | VGG/LPIPS 特征损失 | `--lambda_perceptual 0.05 --use_vgg_loss` |
-| **2** | 表达式自适应着色 | 表情条件外观 MLP | `--use_expr_adaptive_color --lambda_expr_color 0.01` |
 
 ---
 
@@ -18,11 +17,10 @@
 ```
 GaussianAvatars/
 ├── utils/
-│   ├── expression_adaptive_color.py    # 模块 2：表达式自适应着色
-│   └── perceptual_loss.py              # 模块 1：感知损失（已存在）
+│   └── perceptual_loss.py              # 模块 1：感知损失
 │
 ├── arguments/__init__.py               # 新增命令行参数
-├── train.py                            # 集成感知损失（已完成）
+├── train.py                            # 集成感知损失
 │
 ├── New.md                              # 原论文重构方案（中文）
 ├── Change.md                           # 增强模块详解（中文）
@@ -42,16 +40,14 @@ GaussianAvatars/
 export SUBJECT=306
 export DATA_DIR="data/UNION10_${SUBJECT}_EMO1234EXP234589_v16_DS2-0.5x_lmkSTAR_teethV3_SMOOTH_offsetS_whiteBg_maskBelowLine"
 
-# 2. 运行一键训练脚本（包含 Baseline + 2 个模块 + 最佳组合）
+# 2. 运行一键训练脚本（包含 Baseline + 感知损失增强）
 chmod +x train_with_enhancements.sh
 ./train_with_enhancements.sh
 ```
 
 脚本将依次训练：
 1. Baseline（无增强）
-2. Innovation 1（感知损失）
-3. Innovation 2（表达式自适应）
-4. Best Combination（1+2 组合）
+2. Perceptual Loss（感知损失增强）
 
 所有结果保存在 `output/` 目录，自动生成 JSON 指标和 MP4 视频。
 
@@ -78,34 +74,6 @@ python train.py \
 ```
 
 **预期效果**：LPIPS ↓10-20%，纹理更清晰，头发/皮肤细节改善。
-
-#### 模块 2：表达式自适应着色
-```bash
-python train.py \
-  -s ${DATA_DIR} \
-  -m output/expr_adaptive_color \
-  --bind_to_mesh --white_background --eval --iterations 600000 \
-  --use_expr_adaptive_color \
-  --lambda_expr_color 0.01 \
-  --expr_color_lr 1e-4
-```
-
-**预期效果**：动态表情下（笑、哭、皱眉）颜色一致性改善。
-
----
-
-### 方法 3：最佳组合（用于论文）
-
-```bash
-python train.py \
-  -s ${DATA_DIR} \
-  -m output/best_combination \
-  --bind_to_mesh --white_background --eval --iterations 600000 \
-  --lambda_perceptual 0.05 --use_vgg_loss \
-  --use_expr_adaptive_color --lambda_expr_color 0.01
-```
-
-**预期效果**：综合提升，LPIPS ↓20%，PSNR ↑1 dB。
 
 ---
 
@@ -143,8 +111,8 @@ ffmpeg -i output/baseline/val/ours_600000/renders.mp4 \
 |  | - 环境搭建、数据准备 | |
 |  | - 训练流程、评估管线 | |
 |  | - 可视化方法、命令速查 | |
-| **Change.md** | 增强模块详解（中文）| 512 行 |
-|  | - 2 个模块的原理、实现、使用 | |
+| **Change.md** | 增强模块详解（中文）| 237 行 |
+|  | - 感知损失模块的原理、实现、使用 | |
 |  | - 参数调优指南 | |
 |  | - 预期效果对比 | |
 |  | - 论文撰写建议 | |
@@ -168,11 +136,6 @@ ffmpeg -i output/baseline/val/ours_600000/renders.mp4 \
 
 **常见问题**：若出现颜色偏移，降低权重到 0.03。
 
-### 表达式颜色权重
-- 默认 `lambda_expr_color=0.01` 适用于大多数场景
-- 若无明显效果，增加到 0.02
-- 若颜色抖动，降低到 0.005 或增加 `expr_color_lr` 到 5e-4
-
 ---
 
 ## ❓ 常见问题
@@ -180,18 +143,14 @@ ffmpeg -i output/baseline/val/ours_600000/renders.mp4 \
 ### Q1: 如何禁用某个模块？
 A: 不传对应的 `--use_xxx` 参数即可（默认全部禁用）。
 
-### Q2: 可以组合多个模块吗？
-A: 可以！推荐组合：感知损失 + 表达式自适应着色。
+### Q2: 训练时间会增加多少？
+A: 感知损失：+5-10%
 
-### Q3: 训练时间会增加多少？
-A: - 感知损失：+5-10%
-    - 表达式自适应着色：+2-5%
-
-### Q4: 如何验证模块生效？
+### Q3: 如何验证模块生效？
 A: 检查 TensorBoard：
     - 感知损失：`train_loss_patches/perceptual_loss` 曲线应下降
 
-### Q5: 论文中应该报告哪些指标？
+### Q4: 论文中应该报告哪些指标？
 A: - **必须**：PSNR、SSIM、LPIPS（val + test）
    - **推荐**：BRISQUE（跨身份）、训练时间、高斯数量
    - **可选**：用户研究 MOS 评分
@@ -200,13 +159,9 @@ A: - **必须**：PSNR、SSIM、LPIPS（val + test）
 
 ## 📚 参考论文
 
-### 模块 1：感知损失
+### 感知损失增强
 - Johnson et al. "Perceptual Losses for Real-Time Style Transfer and Super-Resolution." ECCV 2016.
 - Zhang et al. "The Unreasonable Effectiveness of Deep Features as a Perceptual Metric." CVPR 2018.
-
-### 模块 2：表达式自适应
-- Grassal et al. "Neural Head Avatars from Monocular RGB Videos." CVPR 2023.
-- Wang et al. "FaceVerse: a Fine-grained and Detail-controllable 3D Face Morphable Model." CVPR 2022.
 
 ---
 
