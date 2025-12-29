@@ -846,7 +846,6 @@ python remote_viewer.py --port 60001
 ## 10. 更新日志
 
 - **2024-11-20**: 创建完整实验与评估指南 (All.md)
-- 移除创新点2 (Expression-Dependent Appearance Network)
 - 更新 `metrics.py` 支持val/test双目录评估
 - 更新 `evaluate_cross_identity.py` 仅保留BRISQUE指标
 
