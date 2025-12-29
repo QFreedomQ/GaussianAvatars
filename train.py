@@ -41,7 +41,17 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     first_iter = 0
     tb_writer = prepare_output_and_logger(dataset)
     if dataset.bind_to_mesh:
-        gaussians = FlameGaussianModel(dataset.sh_degree, dataset.disable_flame_static_offset, dataset.not_finetune_flame_params)
+        gaussians = FlameGaussianModel(
+            dataset.sh_degree, 
+            dataset.disable_flame_static_offset, 
+            dataset.not_finetune_flame_params,
+            n_shape=300, 
+            n_expr=100,
+            use_neural_deformation=dataset.use_neural_deformation,
+            use_uv_texture=dataset.use_uv_texture
+        )
+        # Set perceptual loss enabled flag for logging
+        gaussians.perceptual_loss_enabled = hasattr(opt, 'lambda_perceptual') and opt.lambda_perceptual > 0
         mesh_renderer = NVDiffRenderer()
     else:
         gaussians = GaussianModel(dataset.sh_degree)
